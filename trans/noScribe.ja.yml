@@ -80,7 +80,7 @@ ja:
   start_job: 'ジョブを開始: %{audio_file}'
   start_audio_conversion: '音声の変換を開始中...'
   audio_conversion_finished: '音声の変換が完了しました'
-  start_identifiying_speakers: '話者の識別を開始中...'
+  start_identifying_speakers: '話者の識別を開始中...'
   loading_pyannote: 'pyannoteの読み込み中'
   start_canceling: 'キャンセル中...（しばらくお待ちください）'
   start_transcription: '転写を開始中...'
@@ -107,6 +107,7 @@ ja:
     出力ファイルを上書きしますか？
   err_invalid_time_string: '無効な時間です：" %{time}"'
   err_options: 'オプションのエラー'
+  err_unsupported_output_format: 'エラー: 出力形式 "%{file_type}" はサポートされていません。'
   err_no_audio_file: 'エラー：音声ファイルを選択してください。'
   err_no_transcript_file: 'エラー：転写が完了したファイル名を選択してください。'
   err_ffmpeg: 'ffmpegでエラーが発生しました'
@@ -159,3 +160,14 @@ ja:
   # 追加のUIボタン
   send_queue: 'ジョブをキューに送る'
   queue_run_button: '実行'
+
+  # 話者命名ダイアログ
+  speaker_naming_title: '話者認識'
+  speaker_naming_hint: >
+    検出された話者に名前を入力してください。チェックした話者は声紋が保存され、
+    noScribeが将来の録音で自動的に認識できるようになります。
+  speaker_name_placeholder: '名前を入力...'
+  speaker_new_badge: '新規'
+  speaker_save_checkbox: '保存'
+  btn_ok: 'OK'
+  btn_skip: 'スキップ'

@@ -75,6 +75,7 @@ from typing import Optional, List
 import time
 
 import utils
+import speaker_db
 
  # Pyinstaller fix, used to open multiple instances on Mac
 mp.freeze_support()
@@ -178,6 +179,58 @@ if not os.path.exists(config_dir):
 
 config_file = os.path.join(config_dir, 'config.yml')
 
+# -----------------------------------------------------------------------
+# languages.yml – user-editable language filter
+# -----------------------------------------------------------------------
+# The file lives in the same folder as noScribe.py (app_dir).
+# noScribe reads it but NEVER overwrites it, so comments and formatting
+# are always preserved.
+#
+# On first run the file is created automatically with all languages
+# listed and an explanatory header, so users can immediately start
+# commenting out the ones they don't need.
+
+_languages_file = os.path.join(app_dir, 'languages.yml')
+
+_LANGUAGES_FILE_HEADER = """\
+# noScribe – Transcription Language List
+# ----------------------------------------
+# Each uncommented line enables that language in the dropdown menu.
+# To hide a language, add '#' at the beginning of the line.
+# This file is NEVER rewritten by noScribe, so your edits are safe.
+#
+# Tip: keep only the languages you actually use to shorten the list.
+# 'Auto' lets noScribe detect the language automatically (recommended).
+# 'Multilingual' is an experimental mode for mixed-language recordings.
+
+"""
+
+def _build_languages_file_content() -> str:
+    lines = [_LANGUAGES_FILE_HEADER]
+    for name in languages:
+        lines.append(f"- {name}\n")
+    return "".join(lines)
+
+if not os.path.exists(_languages_file):
+    try:
+        with open(_languages_file, 'w', encoding='utf-8') as _f:
+            _f.write(_build_languages_file_content())
+    except Exception:
+        pass  # Non-fatal: fall back to full list
+
+# Load and apply the language filter (if the file exists and is readable)
+try:
+    with open(_languages_file, 'r', encoding='utf-8') as _f:
+        _lang_list = yaml.safe_load(_f)
+    if isinstance(_lang_list, list) and _lang_list:
+        _allowed = {str(x) for x in _lang_list if x is not None}
+        _filtered = {k: v for k, v in languages.items() if k in _allowed}
+        # 'Auto' must always be present so the dropdown never breaks
+        _filtered.setdefault('Auto', 'auto')
+        languages = _filtered
+except Exception:
+    pass  # Non-fatal: keep the full list
+
 try:
     with open(config_file, 'r') as file:
         config = yaml.safe_load(file)
@@ -242,7 +295,7 @@ def version_higher(version1, version2, subversion_level=99) -> int:
             return 2
         if i >= subversion_level:
             break
-    # must be completly equal
+    # must be completely equal
     return 0
     
 config['app_version'] = app_version
@@ -377,7 +430,7 @@ def html_to_text(parser: AdvancedHTMLParser.AdvancedHTMLParser) -> str:
 # Helper for WebVTT output
 
 def vtt_escape(txt: str) -> str:
-    txt = html.escape(txt)
+    txt = html.escape(txt, quote=False)
     while txt.find('\n\n') > -1:
         txt = txt.replace('\n\n', '\n')
     return txt    
@@ -1020,34 +1073,138 @@ class JobEntryFrame(ctk.CTkFrame, CTkScalingBaseClass):
                 font=("", font_size)
             )
 
+class SpeakerNamingDialog(ctk.CTkToplevel):
+    """Modal dialog shown after diarization to let the user assign names to
+    detected speakers and optionally persist their voice signatures."""
+
+    def __init__(self, parent, speakers_data: list):
+        """
+        Parameters
+        ----------
+        speakers_data : list of dict
+            Each entry has keys:
+              'label'        – pyannote label, e.g. 'SPEAKER_01'
+              'short_label'  – display label, e.g. 'S01'
+              'matched_name' – name from DB, or None
+              'similarity'   – cosine similarity (0–1)
+              'embedding'    – list of floats, or None
+        """
+        super().__init__(parent)
+        self.title(t('speaker_naming_title'))
+        self.resizable(False, False)
+        self.result = {}          # {label: name} – populated on OK
+        self._save_results = {}   # {label: (name, embedding)} to save
+        self._entries = {}        # {label: tk.StringVar}
+        self._save_vars = {}      # {label: tk.BooleanVar}
+        self._speakers_data = speakers_data
+
+        self._build_ui()
+        self.grab_set()
+        self.focus_force()
+        # Center relative to parent
+        self.update_idletasks()
+        pw = parent.winfo_x() + parent.winfo_width() // 2
+        ph = parent.winfo_y() + parent.winfo_height() // 2
+        w = self.winfo_reqwidth()
+        h = self.winfo_reqheight()
+        self.geometry(f"+{pw - w // 2}+{ph - h // 2}")
+
+    def _build_ui(self):
+        pad = {'padx': 20, 'pady': (5, 2)}
+
+        ctk.CTkLabel(
+            self,
+            text=t('speaker_naming_title'),
+            font=ctk.CTkFont(size=15, weight="bold")
+        ).pack(pady=(15, 3), padx=20)
+
+        ctk.CTkLabel(
+            self,
+            text=t('speaker_naming_hint'),
+            wraplength=440,
+            justify='left'
+        ).pack(pady=(0, 8), padx=20)
+
+        # Scrollable frame for speakers
+        visible = min(len(self._speakers_data), 6)
+        scroll_frame = ctk.CTkScrollableFrame(self, width=460,
+                                               height=visible * 56 + 10)
+        scroll_frame.pack(padx=15, pady=5, fill='x')
+
+        for spk in self._speakers_data:
+            row = ctk.CTkFrame(scroll_frame)
+            row.pack(fill='x', padx=5, pady=3)
+
+            ctk.CTkLabel(row, text=spk['short_label'],
+                         width=45,
+                         font=ctk.CTkFont(weight="bold")).pack(
+                             side='left', padx=(8, 4))
+
+            entry_var = tk.StringVar(value=spk.get('matched_name') or '')
+            entry = ctk.CTkEntry(row, textvariable=entry_var, width=185,
+                                  placeholder_text=t('speaker_name_placeholder'))
+            entry.pack(side='left', padx=4)
+            self._entries[spk['label']] = entry_var
+
+            # Confidence badge
+            matched = spk.get('matched_name')
+            sim = spk.get('similarity', 0.0)
+            if matched and sim >= speaker_db.SIMILARITY_THRESHOLD:
+                badge_text = f"{int(sim * 100)}%"
+                badge_color = "#4CAF50"
+            elif sim > 0.55:
+                badge_text = f"~{int(sim * 100)}%"
+                badge_color = "#FF9800"
+            else:
+                badge_text = t('speaker_new_badge')
+                badge_color = "#78909C"
+            ctk.CTkLabel(row, text=badge_text, text_color=badge_color,
+                         width=46).pack(side='left', padx=2)
+
+            # Save checkbox (only useful when we have an embedding)
+            save_var = tk.BooleanVar(
+                value=bool(matched) and spk.get('embedding') is not None
+            )
+            if spk.get('embedding') is not None:
+                ctk.CTkCheckBox(row, text=t('speaker_save_checkbox'),
+                                variable=save_var, width=65).pack(
+                                    side='left', padx=(4, 8))
+            self._save_vars[spk['label']] = save_var
+
+        # Buttons
+        btn_frame = ctk.CTkFrame(self, fg_color="transparent")
+        btn_frame.pack(pady=12)
+        ctk.CTkButton(btn_frame, text=t('btn_ok'),
+                      command=self._on_ok, width=110).pack(side='left', padx=10)
+        ctk.CTkButton(btn_frame, text=t('btn_skip'),
+                      command=self._on_skip, width=110).pack(side='left', padx=10)
+
+    def _on_ok(self):
+        for spk in self._speakers_data:
+            label = spk['label']
+            name = self._entries[label].get().strip()
+            if name:
+                self.result[label] = name
+                save_var = self._save_vars.get(label)
+                if save_var and save_var.get() and spk.get('embedding'):
+                    try:
+                        speaker_db.save_speaker(name, spk['embedding'])
+                    except Exception:
+                        pass
+        self.destroy()
+
+    def _on_skip(self):
+        self.result = {}
+        self.destroy()
+
+
 class App(ctk.CTk):
     def __init__(self):
         super().__init__()
 
         self.protocol("WM_DELETE_WINDOW", self.on_closing)
-        
-        self.user_models_dir = os.path.join(config_dir, 'whisper_models')
-        os.makedirs(self.user_models_dir, exist_ok=True)
-        whisper_models_readme = os.path.join(self.user_models_dir, 'readme.txt')
-        if not os.path.exists(whisper_models_readme):
-            with open(whisper_models_readme, 'w') as file:
-                file.write('You can download custom Whisper-models for the transcription into this folder. \n' 
-                           'See here for more information: https://github.com/kaixxx/noScribe/wiki/Add-custom-Whisper-models-for-transcription')            
-        
-        self.queue = TranscriptionQueue()
-        self.audio_files_list = []
-        self.transcript_files_list = []
-        self.log_file = None
-        self.cancel = False # if set to True, transcription will be canceled
-        # If True, cancel only the currently running job (triggered from queue row "X")
-        self._cancel_job_only = False
-        self.current_progress = -1
-        # Track background activity for robust shutdown
-        self._worker_threads = []
-        self._mp_proc = None
-        self._mp_queue = None
-        self._ffmpeg_proc = None
-        self._shutting_down = False
+
+        _init_app_state(self)
 
         # configure window
         self.title('noScribe - ' + t('app_header'))
@@ -1500,6 +1657,8 @@ class App(ctk.CTk):
                         
     def update_queue_table(self):
         """Update the queue table by diffing: update existing rows, add new ones, remove missing."""
+        if getattr(self, '_headless', False):
+            return
         current_keys = []
         for i in range(len(self.queue.jobs)):
             job = self.queue.jobs[i]
@@ -1786,7 +1945,7 @@ class App(ctk.CTk):
                 if row['frame'].winfo_exists():
                     row['frame'].destroy()
                     
-        # Udate queue tab title
+        # Update queue tab title
         new_name = f'{t("tab_queue")} ({len(self.queue.jobs) - len(self.queue.get_waiting_jobs()) - len(self.queue.get_running_jobs())}/{len(self.queue.jobs)})'
         old_name = self.tabview._name_list[1]
         if new_name != old_name:
@@ -1801,6 +1960,8 @@ class App(ctk.CTk):
 
     def update_queue_controls(self):
         """Enable/disable and label the queue control buttons based on state."""
+        if getattr(self, '_headless', False):
+            return
         try:
             has_running = len(self.queue.get_running_jobs()) > 0
             has_pending = self.queue.has_pending_jobs()
@@ -1972,7 +2133,7 @@ class App(ctk.CTk):
             pass
 
     def launch_editor(self, file=''):
-        # Launch the editor in a seperate process so that in can stay running even if noScribe quits.
+        # Launch the editor in a separate process so that in can stay running even if noScribe quits.
         # Source: https://stackoverflow.com/questions/13243807/popen-waiting-for-child-process-even-when-the-immediate-child-has-terminated/13256908#13256908 
         # set system/version dependent "start_new_session" analogs
   
@@ -2041,7 +2202,7 @@ class App(ctk.CTk):
         if where != 'file': 
             if txt[:-1] != t('welcome_instructions'):
                 print(txt, end='')            
-            if hasattr(self, 'log_textbox') and self.log_textbox.winfo_exists():
+            if not getattr(self, '_headless', False) and hasattr(self, 'log_textbox') and self.log_textbox.winfo_exists():
                 try:
                     self.log_textbox.configure(state=tk.NORMAL)
                     # To prevent slowing down the UI, limit the content of log_textbox to max 5000 characters
@@ -2084,7 +2245,7 @@ class App(ctk.CTk):
 
     def logr(self, txt: str = '', tags: list = [], where: str = 'both', link:str = '', tb: str = '') -> None:
         """ Replace the last line of the log """
-        if where != 'file':
+        if where != 'file' and not getattr(self, '_headless', False) and hasattr(self, 'log_textbox') and self.log_textbox.winfo_exists():
             self.log_textbox.configure(state=ctk.NORMAL)
             tmp_txt = self.log_textbox.get("end-1c linestart", "end-1c")
             self.log_textbox.delete("end-1c linestart", "end-1c")
@@ -2193,6 +2354,8 @@ class App(ctk.CTk):
         
     def set_progress(self, step, value, speaker_detection='none'):
         """ Update state of the progress bar """
+        if getattr(self, '_headless', False):
+            return
         progr = -1
         if step == 1:
             progr = value * 0.05 / 100
@@ -2379,13 +2542,14 @@ class App(ctk.CTk):
             self.logn(t('processing_time', total_time_str=total_time_str))
             
             # open editor if only a single file was processed
-            if queue_jobs_processed == 1 \
+            if not getattr(self, '_headless', False) \
+                    and queue_jobs_processed == 1 \
                     and job \
                     and job.file_ext == 'html' \
                     and job.status == JobStatus.FINISHED \
                     and get_config('auto_edit_transcript', 'True') == 'True':
                 self.launch_editor(job.transcript_file)
-            elif queue_jobs_processed > 1:
+            elif queue_jobs_processed > 1 and not getattr(self, '_headless', False):
                 # if more than one job has been processed, switch to queue tab for an overview 
                 self.tabview.set(self.tabview._name_list[1])
             
@@ -2577,9 +2741,14 @@ class App(ctk.CTk):
                     ol_len = overlap_end - overlap_start + 1
                     return ol_len / ts_len
 
+                # Mapping from pyannote label (e.g. "SPEAKER_01") to a human
+                # name confirmed via the speaker naming dialog.  Populated
+                # after diarization if voice signatures are available.
+                speaker_name_map = {}
+
                 def find_speaker(diarization, transcript_start, transcript_end) -> str:
-                    # Looks for the shortest segment in diarization that has at least 80% overlap 
-                    # with transcript_start - trancript_end.  
+                    # Looks for the shortest segment in diarization that has at least 80% overlap
+                    # with transcript_start - trancript_end.
                     # Returns the speaker name if found.
                     # If only an overlap < 80% is found, this speaker name ist returned.
                     # If no overlap is found, an empty string is returned.
@@ -2595,7 +2764,11 @@ class App(ctk.CTk):
                             break
 
                         current_segment_len = segment["end"] - segment["start"] # Length of the current segment
-                        current_segment_spkr = f'S{segment["label"][8:]}' # shorten the label: "SPEAKER_01" > "S01"
+                        lbl = segment["label"]
+                        # Use confirmed name from dialog if available, else fall
+                        # back to short label like "S01"
+                        current_segment_spkr = speaker_name_map.get(
+                            lbl, f'S{lbl[8:]}')  # "SPEAKER_01" -> "S01"
 
                         if overlap_found >= overlap_threshold: # we already found a fitting segment, compare length now
                             if (t >= overlap_threshold) and (current_segment_len < segment_len): # found a shorter (= better fitting) segment that also overlaps well
@@ -2603,11 +2776,11 @@ class App(ctk.CTk):
                                 overlap_found = t
                                 segment_len = current_segment_len
                                 spkr = current_segment_spkr
-                        elif t > overlap_found: # no segment with good overlap yet, take this if the overlap is better then previously found 
+                        elif t > overlap_found: # no segment with good overlap yet, take this if the overlap is better then previously found
                             overlap_found = t
                             segment_len = current_segment_len
                             spkr = current_segment_spkr
-                        
+
                     if job.overlapping and is_overlapping:
                         return f"//{spkr}"
                     else:
@@ -2621,13 +2794,13 @@ class App(ctk.CTk):
                         self.update_queue_table()
 
                         self.logn()
-                        self.logn(t('start_identifiying_speakers'), 'highlight')
+                        self.logn(t('start_identifying_speakers'), 'highlight')
                         self.logn(t('loading_pyannote'))
                         # self.set_progress(1, 100, job.speaker_detection)
 
                         while True:
                             try:
-                                diarization = self._run_diarize_subprocess(tmp_audio_file, job)
+                                diarization, _embeddings = self._run_diarize_subprocess(tmp_audio_file, job)
                                 break
                             except Exception as err:
                                 if self._handle_cuda_fallback('pyannote', err):
@@ -2641,6 +2814,54 @@ class App(ctk.CTk):
                             self.logn(line, where='file')
 
                         self.logn()
+
+                        # --------------------------------------------------
+                        # Speaker naming dialog: match embeddings against the
+                        # stored database and ask the user to confirm / assign
+                        # names for this session.
+                        # --------------------------------------------------
+                        if _embeddings:
+                            # Build data list for the dialog
+                            seen_labels = set()
+                            speakers_data = []
+                            for seg in diarization:
+                                lbl = seg["label"]
+                                if lbl in seen_labels:
+                                    continue
+                                seen_labels.add(lbl)
+                                short = f'S{lbl[8:]}'  # "SPEAKER_01" -> "S01"
+                                emb = _embeddings.get(lbl)
+                                matched_name, sim = (None, 0.0)
+                                if emb:
+                                    try:
+                                        matched_name, sim = speaker_db.find_match(emb)
+                                    except Exception:
+                                        pass
+                                speakers_data.append({
+                                    'label': lbl,
+                                    'short_label': short,
+                                    'matched_name': matched_name,
+                                    'similarity': sim,
+                                    'embedding': emb,
+                                })
+
+                            # Show the dialog in the main GUI thread and wait
+                            import threading as _threading
+                            _result_holder = [{}]
+                            _dialog_done = _threading.Event()
+
+                            def _open_naming_dialog():
+                                try:
+                                    _result_holder[0] = self._run_speaker_naming_dialog(
+                                        speakers_data)
+                                except Exception:
+                                    _result_holder[0] = {}
+                                finally:
+                                    _dialog_done.set()
+
+                            self.after(0, _open_naming_dialog)
+                            _dialog_done.wait()
+                            speaker_name_map.update(_result_holder[0])
 
                     except Exception as e:
                         traceback_str = traceback.format_exc()
@@ -2710,7 +2931,7 @@ class App(ctk.CTk):
                     br = d.createElement('br')
                     s.appendChild(br)
 
-                    s.appendText(f'({html.escape(option_info)})')
+                    s.appendText(f'({html.escape(option_info, quote=False)})')
 
                     p.appendChild(s)
                     main_body.appendChild(p)
@@ -2777,25 +2998,35 @@ class App(ctk.CTk):
                     speech_chunks = get_speech_timestamps(audio, vad_parameters)
 
                     def adjust_for_pause(segment):
-                        """Adjusts start and end of segment if it falls into a pause 
+                        """Adjusts start and end of segment if it falls into a pause
                         identified by the VAD"""
                         pause_extend = 0.2  # extend the pauses by 200ms to make the detection more robust
-                        
+
+                        original_start = segment.start
+                        original_end = segment.end
+
                         # iterate through the pauses and adjust segment boundaries accordingly
                         for i in range(0, len(speech_chunks)):
                             pause_start = (speech_chunks[i]['end'] / sampling_rate) - pause_extend
-                            if i == (len(speech_chunks) - 1): 
+                            if i == (len(speech_chunks) - 1):
                                 pause_end = duration + pause_extend # last segment, pause till the end
                             else:
                                 pause_end = (speech_chunks[i+1]['start']  / sampling_rate) + pause_extend
-                            
+
                             if pause_start > segment.end:
                                 break  # we moved beyond the segment, stop going further
                             if segment.start > pause_start and segment.start < pause_end:
                                 segment.start = pause_end - pause_extend
                             if segment.end > pause_start and segment.end < pause_end:
                                 segment.end = pause_start + pause_extend
-                        
+
+                        # Safety check: if pause adjustments caused start >= end
+                        # (e.g. short segment fully inside a pause), revert to
+                        # original boundaries to avoid negative durations (#253)
+                        if segment.start >= segment.end:
+                            segment.start = original_start
+                            segment.end = original_end
+
                         return segment
                                     
                     # Run Faster-Whisper in a spawned subprocess and stream segments
@@ -2820,7 +3051,7 @@ class App(ctk.CTk):
                         # get time of the segment in milliseconds
                         start = round(segment.start * 1000.0)
                         end = round(segment.end * 1000.0)
-                        # if we skipped a part at the beginning of the audio we have to add this here again, otherwise the timestaps will not match the original audio:
+                        # if we skipped a part at the beginning of the audio we have to add this here again, otherwise the timestamps will not match the original audio:
                         orig_audio_start = job.start + start
                         orig_audio_end = job.start + end
 
@@ -2856,7 +3087,7 @@ class App(ctk.CTk):
                         # write text to the doc
                         # diarization (speaker detection)?
                         seg_text = segment.text
-                        seg_html = html.escape(seg_text)
+                        seg_html = html.escape(seg_text, quote=False)
 
                         if job.speaker_detection != 'none':
                             new_speaker = find_speaker(diarization, start, end)
@@ -2865,11 +3096,11 @@ class App(ctk.CTk):
                                     prev_speaker = speaker
                                     speaker = new_speaker
                                     seg_text = f' {speaker}:{seg_text}'
-                                    seg_html = html.escape(seg_text)                                
+                                    seg_html = html.escape(seg_text, quote=False)                                
                                 elif (speaker[:2] == '//') and (new_speaker == prev_speaker): # was overlapping speech and we are returning to the previous speaker 
                                     speaker = new_speaker
                                     seg_text = f'//{seg_text}'
-                                    seg_html = html.escape(seg_text)
+                                    seg_html = html.escape(seg_text, quote=False)
                                 else: # new speaker, not overlapping
                                     if speaker[:2] == '//': # was overlapping speech, mark the end
                                         last_elem = p.lastElementChild
@@ -2886,33 +3117,33 @@ class App(ctk.CTk):
                                     speaker = new_speaker
                                     # add timestamp
                                     if job.timestamps:
-                                        seg_html = f'{speaker}: <span style="color: {job.timestamp_color}" >{ts}</span>{html.escape(seg_text)}'
+                                        seg_html = f'{speaker}: <span style="color: {job.timestamp_color}" >{ts}</span>{html.escape(seg_text, quote=False)}'
                                         seg_text = f'{speaker}: {ts}{seg_text}'
                                         last_timestamp_ms = start
                                     else:
                                         if job.file_ext != 'vtt': # in vtt files, speaker names are added as special voice tags so skip this here
                                             seg_text = f'{speaker}:{seg_text}'
-                                            seg_html = html.escape(seg_text)
+                                            seg_html = html.escape(seg_text, quote=False)
                                         else:
-                                            seg_html = html.escape(seg_text).lstrip()
+                                            seg_html = html.escape(seg_text, quote=False).lstrip()
                                             seg_text = f'{speaker}:{seg_text}'
                                         
                             else: # same speaker
                                 if job.timestamps:
                                     if (start - last_timestamp_ms) > job.timestamp_interval:
-                                        seg_html = f' <span style=\"color: {job.timestamp_color}\" >{ts}</span>{html.escape(seg_text)}'
+                                        seg_html = f' <span style=\"color: {job.timestamp_color}\" >{ts}</span>{html.escape(seg_text, quote=False)}'
                                         seg_text = f' {ts}{seg_text}'
                                         last_timestamp_ms = start
                                     else:
-                                        seg_html = html.escape(seg_text)
+                                        seg_html = html.escape(seg_text, quote=False)
 
                         else: # no speaker detection
                             if job.timestamps and (first_segment or (start - last_timestamp_ms) > job.timestamp_interval):
-                                seg_html = f' <span style=\"color: {job.timestamp_color}\" >{ts}</span>{html.escape(seg_text)}'
+                                seg_html = f' <span style=\"color: {job.timestamp_color}\" >{ts}</span>{html.escape(seg_text, quote=False)}'
                                 seg_text = f' {ts}{seg_text}'
                                 last_timestamp_ms = start
                             else:
-                                seg_html = html.escape(seg_text)
+                                seg_html = html.escape(seg_text, quote=False)
                             # avoid leading whitespace in first paragraph
                             if first_segment:
                                 seg_text = seg_text.lstrip()
@@ -2964,11 +3195,15 @@ class App(ctk.CTk):
                             job.has_partial_transcript = False
                         if transcription_success:
                             if job.transcript_file != orig_transcript_file: # used alternative filename because saving under the initial name failed
-                                self.log(t('rescue_saving'))
-                                self.logn(job.transcript_file, link=f'file://{job.transcript_file}')
+                                self.logn(
+                                    t('rescue_saving', file=job.transcript_file),
+                                    link=f'file://{job.transcript_file}'
+                                )
                             else:
-                                self.log(t('transcription_saved'))
-                                self.logn(job.transcript_file, link=f'file://{job.transcript_file}')
+                                self.logn(
+                                    t('transcription_saved', file=job.transcript_file),
+                                    link=f'file://{job.transcript_file}'
+                                )
                     if retry_cuda:
                         self.logn(t('whisper_cuda_retry'), 'highlight')
                         continue
@@ -3182,6 +3417,11 @@ class App(ctk.CTk):
                 proc.close()
             except Exception:
                 pass
+            try:
+                q.close()
+                q.join_thread()
+            except Exception:
+                pass
             # Clear exposed handles
             self._mp_proc = None
             self._mp_queue = None
@@ -3194,7 +3434,11 @@ class App(ctk.CTk):
         return info_obj
 
     def _run_diarize_subprocess(self, tmp_audio_file: str, job):
-        """Spawn a subprocess to run diarization and return list of segments.
+        """Spawn a subprocess to run diarization and return (segments, embeddings).
+
+        *segments* is a list of dicts {start, end, label}.
+        *embeddings* is a dict {label: [float, ...]} with per-speaker voice
+        embeddings, or an empty dict when extraction was not possible.
         Streams child logs/progress back to GUI and honors cancel.
         """
         global force_pyannote_cpu
@@ -3213,6 +3457,7 @@ class App(ctk.CTk):
         self._mp_queue = q
 
         diarization = None
+        embeddings = {}
         try:
             while True:
                 try:
@@ -3245,6 +3490,7 @@ class App(ctk.CTk):
                 elif mtype == "result":
                     if msg.get("ok"):
                         diarization = msg.get("segments", [])
+                        embeddings = msg.get("embeddings", {})
                     else:
                         err = msg.get('error', 'Diarization failed')
                         trc = msg.get('trace')
@@ -3268,10 +3514,23 @@ class App(ctk.CTk):
                 proc.close()
             except Exception:
                 pass
+            try:
+                q.close()
+                q.join_thread()
+            except Exception:
+                pass
             self._mp_proc = None
             self._mp_queue = None
 
-        return diarization or []
+        return diarization or [], embeddings
+
+    def _run_speaker_naming_dialog(self, speakers_data: list) -> dict:
+        """Show SpeakerNamingDialog in the main (GUI) thread and return the
+        resulting {label: name} mapping.  Must be called from the main thread.
+        """
+        dialog = SpeakerNamingDialog(self, speakers_data)
+        self.wait_window(dialog)
+        return dialog.result
     
     def on_closing(self):
         # (see: https://stackoverflow.com/questions/111155/how-do-i-handle-the-window-close-event-in-tkinter)
@@ -3365,16 +3624,85 @@ class App(ctk.CTk):
                 pass
             self.destroy()
 
-def run_cli_mode(args):
-    """Run noScribe in CLI mode"""
+
+class HeadlessApp(App):
+    def __init__(self):
+        # Do not initialize Tk/CTk to avoid DISPLAY requirements
+        _init_app_state(self)
+        self._headless = True
+
+    def __getattr__(self, name):
+        # Avoid Tk attribute delegation recursion when CTk isn't initialized
+        raise AttributeError(name)
+
+
+def _cleanup_app(app):
+    """Cleanup app instance for proper process exit in CLI mode."""
     try:
-        # Create a minimal app instance to access model paths and logging
-        app = App()
-        # Hide GUI window for headless execution
+        # Signal shutdown to stop background activity
+        app._shutting_down = True
+        app.cancel = True
+
+        # Terminate active multiprocessing child (diarization/whisper) if present
+        if getattr(app, "_mp_proc", None) is not None:
+            try:
+                if app._mp_proc.is_alive():
+                    app._mp_proc.terminate()
+                    app._mp_proc.join(timeout=1.0)
+            except Exception:
+                pass
+            finally:
+                app._mp_proc = None
+
+        # Close multiprocessing queue
+        if getattr(app, "_mp_queue", None) is not None:
+            try:
+                app._mp_queue.close()
+                app._mp_queue.join_thread()
+            except Exception:
+                pass
+            finally:
+                app._mp_queue = None
+
+        # Terminate ffmpeg if currently converting
+        if getattr(app, "_ffmpeg_proc", None) is not None:
+            try:
+                if app._ffmpeg_proc.poll() is None:
+                    app._ffmpeg_proc.terminate()
+                    app._ffmpeg_proc.wait(timeout=1.0)
+            except Exception:
+                try:
+                    app._ffmpeg_proc.kill()
+                except Exception:
+                    pass
+            finally:
+                app._ffmpeg_proc = None
+
+        # Join worker threads briefly
+        for th in list(getattr(app, "_worker_threads", [])):
+            try:
+                th.join(timeout=0.5)
+            except Exception:
+                pass
+    except Exception:
+        pass
+
+    if not getattr(app, '_headless', False):
         try:
-            app.withdraw()
+            app.quit()
         except Exception:
             pass
+        try:
+            app.destroy()
+        except Exception:
+            pass
+
+def run_cli_mode(args):
+    """Run noScribe in CLI mode"""
+    app = None
+    try:
+        # Create a headless app instance (no GUI initialization)
+        app = HeadlessApp()
         
         # Validate and set the whisper model
         available_models = app.get_whisper_models()
@@ -3445,12 +3773,16 @@ def run_cli_mode(args):
     except Exception as e:
         print(f"Error: {str(e)}")
         return 1
+    finally:
+        if app is not None:
+            _cleanup_app(app)
 
 def show_available_models():
     """Show available Whisper models"""
+    app = None
     try:
-        # Create minimal app instance to get models
-        app = App()
+        # Create headless app instance to get models
+        app = HeadlessApp()
         models = app.get_whisper_models()
         
         print("Available Whisper models:")
@@ -3459,9 +3791,11 @@ def show_available_models():
         
         if not models:
             print("  No models found. Please check your installation.")
-            
     except Exception as e:
         print(f"Error getting models: {str(e)}")
+    finally:
+        if app is not None:
+            _cleanup_app(app)
 
 if __name__ == "__main__":
     # Parse command line arguments
