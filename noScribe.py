@@ -1216,6 +1216,31 @@ class SpeakerNamingDialog(ctk.CTkToplevel):
         self.result = {}
         self.destroy()
 
+def _init_app_state(app):
+    app._headless = False
+    app.user_models_dir = os.path.join(config_dir, 'whisper_models')
+    os.makedirs(app.user_models_dir, exist_ok=True)
+    whisper_models_readme = os.path.join(app.user_models_dir, 'readme.txt')
+    if not os.path.exists(whisper_models_readme):
+        with open(whisper_models_readme, 'w') as file:
+            file.write('You can download custom Whisper-models for the transcription into this folder. \n'
+                       'See here for more information: https://github.com/kaixxx/noScribe/wiki/Add-custom-Whisper-models-for-transcription')
+
+    app.queue = TranscriptionQueue()
+    app.audio_files_list = []
+    app.transcript_files_list = []
+    app.log_file = None
+    app.cancel = False # if set to True, transcription will be canceled
+    # If True, cancel only the currently running job (triggered from queue row "X")
+    app._cancel_job_only = False
+    app.current_progress = -1
+    # Track background activity for robust shutdown
+    app._worker_threads = []
+    app._mp_proc = None
+    app._mp_queue = None
+    app._ffmpeg_proc = None
+    app._shutting_down = False
+
 
 class App(ctk.CTk):
     def __init__(self):
