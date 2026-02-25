@@ -73,9 +73,15 @@ import traceback
 from enum import Enum
 from typing import Optional, List
 import time
+import shutil
 
 import utils
 import speaker_db
+import torchaudio
+
+# Patch for newer torchaudio versions that removed list_audio_backends
+if not hasattr(torchaudio, 'list_audio_backends'):
+    torchaudio.list_audio_backends = lambda: []
 
  # Pyinstaller fix, used to open multiple instances on Mac
 mp.freeze_support()
@@ -787,6 +793,19 @@ def create_transcription_job(audio_file=None, transcript_file=None, start_time=N
     job.whisper_beam_size = get_config('whisper_beam_size', 1)
     job.whisper_temperature = get_config('whisper_temperature', 0.0)
     job.whisper_compute_type = get_config('whisper_compute_type', 'default')
+    
+    # Optimize compute type for macOS (Apple Silicon)
+    if platform.system() == "Darwin":
+        model_str = str(job.whisper_model).lower()
+        if 'int8' in model_str:
+            # For int8 models, use int8 if not overridden
+            if job.whisper_compute_type in ['default', 'float16']:
+                job.whisper_compute_type = 'int8'
+        else:
+            # For non-int8 models (like precise/large), float16 is inaccurate/slow on CPU
+            # Force float32 to avoid conversion warning and overhead
+            if job.whisper_compute_type in ['default', 'float16']:
+                job.whisper_compute_type = 'float32'
     job.timestamp_interval = get_config('timestamp_interval', 60_000)
     job.timestamp_color = get_config('timestamp_color', '#78909C')
     job.pause_marker = get_config('pause_seconds_marker', '.')
@@ -2159,8 +2178,8 @@ class App(ctk.CTk):
         if platform.system() == 'Windows':
             program = os.path.join(app_dir, 'noScribeEdit', 'noScribeEdit.exe')
         elif platform.system() == "Darwin": # = MAC
-            # use local copy in development, installed one if used as an app:
-            program = os.path.join(app_dir, 'noScribeEdit', 'noScribeEdit')
+            # use local copy in development, installed one if used as an app:
+            program = os.path.join(app_dir, 'noScribeEdit', 'noScribeEdit.py')
             if not os.path.exists(program):
                 program = os.path.join(os.sep, 'Applications', 'noScribeEdit.app', 'Contents', 'MacOS', 'noScribeEdit')
         elif platform.system() == "Linux":
@@ -2178,9 +2197,11 @@ class App(ctk.CTk):
             kwargs.update(start_new_session=True)
 
         if program is not None and os.path.exists(program):
-            popenargs = [program]
-            if platform.system() == "Linux" and not hasattr(sys, "_MEIPASS"): # only do this, if you run as python script; Linux python vs. executable needs refinement
+            if program.endswith('.py'):
                 popenargs = [sys.executable, program]
+            else:
+                popenargs = [program]
+            
             if file != '':
                 popenargs.append(file)
             Popen(popenargs, **kwargs)

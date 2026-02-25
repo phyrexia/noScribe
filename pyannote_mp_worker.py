@@ -3,8 +3,13 @@ import platform
 import traceback
 from dataclasses import asdict, is_dataclass
 import os
+
 import torchaudio
 from pathlib import Path
+
+# Patch for newer torchaudio versions that removed list_audio_backends
+if not hasattr(torchaudio, 'list_audio_backends'):
+    torchaudio.list_audio_backends = lambda: []
 
 if platform.system() == "Darwin" and platform.machine() == "x86_64":
     os.environ.setdefault("OMP_NUM_THREADS", "1")

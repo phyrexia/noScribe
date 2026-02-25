@@ -16,7 +16,8 @@ def whisper_proc_entrypoint(args: dict, q):
       {"type": "result", "ok": False, "error": str, "trace": str}
     """
     try:
-        # Import heavy libs only in the child
+        # Import heavy libs only in the child process
+
         from faster_whisper import WhisperModel
         from faster_whisper.audio import decode_audio
         from faster_whisper.vad import VadOptions, get_speech_timestamps

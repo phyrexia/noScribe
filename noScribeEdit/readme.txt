@@ -1,1 +1,0 @@
-This folder must contain an compiled version of the noScribe Editor: https://github.com/kaixxx/noScribeEditor
