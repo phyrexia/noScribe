@@ -5,6 +5,8 @@
 - Improved speaker identification
 - Improved handling of punctuation issues
 - Command line interface for scripting
+- Fix: Speaker naming dialog UI layout and button visibility
+- Improved audio sample playback with better error handling and logging
 - many small fixes, improvements and updates
 
 ## version 0.6:

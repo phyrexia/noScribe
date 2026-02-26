@@ -1180,15 +1180,23 @@ class SpeakerNamingDialog(ctk.CTkToplevel):
             ctk.CTkLabel(row, text=badge_text, text_color=badge_color,
                          width=46).pack(side='left', padx=2)
 
-            # Save checkbox (only useful when we have an embedding)
+            # Save checkbox (useful when we have an embedding, even if not matched)
             save_var = tk.BooleanVar(
-                value=bool(matched) and spk.get('embedding') is not None
+                value=bool(spk.get('embedding') is not None)
             )
             if spk.get('embedding') is not None:
                 ctk.CTkCheckBox(row, text=t('speaker_save_checkbox'),
                                 variable=save_var, width=65).pack(
                                     side='left', padx=(4, 8))
             self._save_vars[spk['label']] = save_var
+
+            # Play button for speaker preview
+            if spk.get('audio_path') and spk.get('sample_start') is not None:
+                play_btn = ctk.CTkButton(
+                    row, text="▶", width=30, height=24,
+                    command=lambda p=spk['audio_path'], s=spk['sample_start'], e=spk['sample_end']: self._play_audio(p, s, e)
+                )
+                play_btn.pack(side='left', padx=(2, 4))
 
         # Buttons
         btn_frame = ctk.CTkFrame(self, fg_color="transparent")
@@ -1197,6 +1205,64 @@ class SpeakerNamingDialog(ctk.CTkToplevel):
                       command=self._on_ok, width=110).pack(side='left', padx=10)
         ctk.CTkButton(btn_frame, text=t('btn_skip'),
                       command=self._on_skip, width=110).pack(side='left', padx=10)
+
+    def _play_audio(self, audio_path, start_ms, end_ms):
+        import threading
+        def _play():
+            try:
+                import soundfile as sf
+                import tempfile
+                import os
+                import platform
+                
+                if not os.path.exists(audio_path):
+                    if hasattr(self.master, 'logn'):
+                        self.master.logn(f"Audio sample file not found: {audio_path}", 'error')
+                    return
+
+                if hasattr(self.master, 'logn'):
+                    self.master.logn(f"Playing audio sample: {audio_path} ({start_ms}ms to {end_ms}ms)")
+
+                data, fs = sf.read(audio_path)
+                # Keep up to 4 seconds
+                start_frame = int((start_ms / 1000) * fs)
+                end_frame = int((end_ms / 1000) * fs)
+                if end_frame <= start_frame:
+                    if hasattr(self.master, 'logn'):
+                        self.master.logn(f"Audio sample segment is empty or invalid (duration: {end_ms - start_ms}ms)", 'warn')
+                    return
+                
+                # Keep up to 4 seconds
+                if end_frame - start_frame > 4 * fs:
+                    end_frame = start_frame + 4 * fs
+                    
+                chunk = data[start_frame:end_frame]
+                
+                fd, temp_wav = tempfile.mkstemp(suffix='.wav')
+                os.close(fd)
+                sf.write(temp_wav, chunk, fs)
+                
+                if platform.system() == "Windows":
+                    import winsound
+                    winsound.PlaySound(temp_wav, winsound.SND_FILENAME)
+                elif platform.system() == "Darwin":
+                    import subprocess
+                    subprocess.run(["afplay", temp_wav])
+                else:
+                    import subprocess
+                    subprocess.run(["aplay", temp_wav])
+                    
+                try:
+                    os.remove(temp_wav)
+                except Exception:
+                    pass
+            except Exception as e:
+                if hasattr(self.master, 'logn'):
+                    self.master.logn(f"Error playing audio segment: {e}", 'error')
+                else:
+                    print(f"Error playing audio segment: {e}")
+                
+        threading.Thread(target=_play, daemon=True).start()
 
     def _on_ok(self):
         for spk in self._speakers_data:
@@ -2677,11 +2743,12 @@ class App(ctk.CTk):
                     self.logn(t('start_audio_conversion'), 'highlight')
                 
                     if int(job.stop) > 0: # transcribe only part of the audio
-                        end_pos_cmd = f'-to {job.stop}ms'
-                    else: # tranbscribe until the end
+                        duration_ms = int(job.stop) - int(job.start)
+                        end_pos_cmd = f'-t {duration_ms}ms'
+                    else: # transcribe until the end
                         end_pos_cmd = ''
 
-                    arguments = f' -loglevel warning -hwaccel auto -y -ss {job.start}ms {end_pos_cmd} -i \"{job.audio_file}\" -ar 16000 -ac 1 -c:a pcm_s16le "{tmp_audio_file}"'
+                    arguments = f' -loglevel warning -hwaccel auto -y -ss {job.start}ms -i \"{job.audio_file}\" {end_pos_cmd} -ar 16000 -ac 1 -c:a pcm_s16le "{tmp_audio_file}"'
                     if platform.system() == 'Windows':
                         ffmpeg_path = os.path.join(app_dir, 'ffmpeg.exe')
                         ffmpeg_cmd = ffmpeg_path + arguments
@@ -2868,10 +2935,15 @@ class App(ctk.CTk):
                         # --------------------------------------------------
                         if _embeddings:
                             # Build data list for the dialog
-                            seen_labels = set()
-                            speakers_data = []
+                            # First collect all segments per speaker to find a good one to play
+                            speaker_segs_map = {}
                             for seg in diarization:
                                 lbl = seg["label"]
+                                speaker_segs_map.setdefault(lbl, []).append(seg)
+                                
+                            seen_labels = set()
+                            speakers_data = []
+                            for lbl, segs in speaker_segs_map.items():
                                 if lbl in seen_labels:
                                     continue
                                 seen_labels.add(lbl)
@@ -2883,12 +2955,19 @@ class App(ctk.CTk):
                                         matched_name, sim = speaker_db.find_match(emb)
                                     except Exception:
                                         pass
+                                        
+                                # Find longest segment to use as audio sample
+                                best_seg = max(segs, key=lambda s: s["end"] - s["start"])
+                                
                                 speakers_data.append({
                                     'label': lbl,
                                     'short_label': short,
                                     'matched_name': matched_name,
                                     'similarity': sim,
                                     'embedding': emb,
+                                    'audio_path': tmp_audio_file,
+                                    'sample_start': best_seg["start"],
+                                    'sample_end': best_seg["end"],
                                 })
 
                             # Show the dialog in the main GUI thread and wait
