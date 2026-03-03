@@ -93,7 +93,12 @@ def pyannote_proc_entrypoint(args: dict, q):
             else:
                 diarization = pipeline({"waveform": waveform, "sample_rate": sample_rate}, hook=hook)
 
-        for turn, speaker in diarization.speaker_diarization:
+        if hasattr(diarization, "speaker_diarization"):
+            diarization_annotation = diarization.speaker_diarization
+        else:
+            diarization_annotation = diarization
+
+        for turn, _, speaker in diarization_annotation.itertracks(yield_label=True):
             seg_list.append({
                 'start': int(turn.start * 1000),
                 'end': int(turn.end * 1000),
@@ -110,39 +115,50 @@ def pyannote_proc_entrypoint(args: dict, q):
             import numpy as np
             from pyannote.core import Segment as _Seg
 
-            embedding_inference = getattr(pipeline, '_embedding', None)
-            if embedding_inference is not None:
-                # Collect all segments per speaker label
-                speaker_windows = {}
-                for turn, _, label in diarization.itertracks(yield_label=True):
-                    speaker_windows.setdefault(label, []).append(turn)
+            # If pyannote provides precalculated embeddings (DiarizeOutput in >= 3.3), use them directly
+            if hasattr(diarization, "speaker_embeddings") and diarization.speaker_embeddings is not None and len(diarization.speaker_embeddings) > 0:
+                labels = diarization_annotation.labels()
+                for i, label in enumerate(labels):
+                    if i < len(diarization.speaker_embeddings):
+                        arr = np.array(diarization.speaker_embeddings[i], dtype=np.float32)
+                        n = float(np.linalg.norm(arr))
+                        if n > 1e-6:
+                            arr = arr / n
+                        speaker_embeddings[label] = arr.tolist()
+            else:
+                embedding_inference = getattr(pipeline, '_embedding', None)
+                if embedding_inference is not None:
+                    # Collect all segments per speaker label
+                    speaker_windows = {}
+                    for turn, _, label in diarization_annotation.itertracks(yield_label=True):
+                        speaker_windows.setdefault(label, []).append(turn)
 
-                for label, windows in speaker_windows.items():
-                    # Use up to 5 longest segments that are at least 1.5 s
-                    best = sorted(windows, key=lambda w: w.duration, reverse=True)
-                    embs = []
-                    for window in best[:5]:
-                        if window.duration < 1.5:
-                            continue
-                        try:
-                            start_s = int(window.start * sample_rate)
-                            end_s   = int(window.end   * sample_rate)
-                            seg_wav = waveform[:, start_s:end_s]
-                            raw = embedding_inference(
-                                {"waveform": seg_wav, "sample_rate": sample_rate}
-                            )
-                            # raw may be a SlidingWindowFeature or ndarray
-                            if hasattr(raw, 'data'):
-                                arr = np.mean(raw.data, axis=0)
-                            else:
-                                arr = np.array(raw, dtype=np.float32).flatten()
-                            if arr.ndim > 1:
-                                arr = arr.mean(axis=0)
-                            arr = arr.astype(np.float32)
-                            if arr.size > 0 and not np.any(np.isnan(arr)):
-                                embs.append(arr)
-                        except Exception:
-                            pass
+                    for label, windows in speaker_windows.items():
+                        # Use up to 5 longest segments that are at least 1.5 s
+                        best = sorted(windows, key=lambda w: w.duration, reverse=True)
+                        embs = []
+                        for window in best[:5]:
+                            if window.duration < 1.5:
+                                continue
+                            try:
+                                start_s = int(window.start * sample_rate)
+                                end_s   = int(window.end   * sample_rate)
+                                seg_wav = waveform[:, start_s:end_s]
+                                raw = embedding_inference(
+                                    {"waveform": seg_wav, "sample_rate": sample_rate}
+                                )
+                                # raw may be a SlidingWindowFeature or ndarray
+                                if hasattr(raw, 'data'):
+                                    arr = np.mean(raw.data, axis=0)
+                                else:
+                                    arr = np.array(raw, dtype=np.float32).flatten()
+                                if arr.ndim > 1:
+                                    arr = arr.mean(axis=0)
+                                arr = arr.astype(np.float32)
+                                if arr.size > 0 and not np.any(np.isnan(arr)):
+                                    embs.append(arr)
+                            except Exception:
+                                pass
 
                     if embs:
                         avg = np.mean(np.stack(embs), axis=0)
