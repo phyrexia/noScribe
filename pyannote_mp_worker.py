@@ -133,12 +133,43 @@ def pyannote_proc_entrypoint(args: dict, q):
                     for turn, _, label in diarization_annotation.itertracks(yield_label=True):
                         speaker_windows.setdefault(label, []).append(turn)
 
+                    # Build a flat list of all (start, end, label) turns for overlap checking
+                    all_turns = []
+                    for turn, _, lbl in diarization_annotation.itertracks(yield_label=True):
+                        all_turns.append((turn.start, turn.end, lbl))
+
+                    def _overlap_ratio(w_start, w_end, skip_label):
+                        """Return the fraction of [w_start, w_end] covered by
+                        any speaker other than skip_label."""
+                        w_len = w_end - w_start
+                        if w_len <= 0:
+                            return 1.0
+                        covered = 0.0
+                        for t_start, t_end, t_lbl in all_turns:
+                            if t_lbl == skip_label:
+                                continue
+                            # Overlap of this foreign turn with our window
+                            ol = min(w_end, t_end) - max(w_start, t_start)
+                            if ol > 0:
+                                covered += ol
+                        return min(covered / w_len, 1.0)
+
+                    OVERLAP_THRESHOLD = 0.10  # discard if > 10% overlap with others
+
                     for label, windows in speaker_windows.items():
-                        # Use up to 5 longest segments that are at least 1.5 s
+                        # Sort by duration descending; prefer clean long segments
                         best = sorted(windows, key=lambda w: w.duration, reverse=True)
                         embs = []
-                        for window in best[:5]:
+                        skipped_overlap = 0
+                        for window in best:
+                            if len(embs) >= 5:
+                                break
                             if window.duration < 1.5:
+                                continue
+                            # --- Overlap filter ---
+                            ratio = _overlap_ratio(window.start, window.end, label)
+                            if ratio > OVERLAP_THRESHOLD:
+                                skipped_overlap += 1
                                 continue
                             try:
                                 start_s = int(window.start * sample_rate)
@@ -160,12 +191,19 @@ def pyannote_proc_entrypoint(args: dict, q):
                             except Exception:
                                 pass
 
-                    if embs:
-                        avg = np.mean(np.stack(embs), axis=0)
-                        n = float(np.linalg.norm(avg))
-                        if n > 1e-6:
-                            avg = avg / n
-                        speaker_embeddings[label] = avg.tolist()
+                        if skipped_overlap > 0:
+                            plog("debug", f"{label}: skipped {skipped_overlap} overlapping segment(s) for embedding")
+
+                        if embs:
+                            avg = np.mean(np.stack(embs), axis=0)
+                            n = float(np.linalg.norm(avg))
+                            if n > 1e-6:
+                                avg = avg / n
+                            speaker_embeddings[label] = avg.tolist()
+                        else:
+                            # No clean segments found: mark as unavailable so the
+                            # dialog shows this speaker without a saveable signature
+                            plog("debug", f"{label}: no clean segments found, embedding omitted")
         except Exception as emb_err:
             plog("debug", f"Speaker embedding extraction skipped: {emb_err}")
 
