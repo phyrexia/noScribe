@@ -2609,6 +2609,7 @@ class App(ctk.CTk):
         filetypes = [
             ('noScribe Transcript','*.html'), 
             ('Text only','*.txt'),
+            ('SubRip Subtitle (SRT)','*.srt'),
             ('WebVTT Subtitles (also for EXMARaLDA)', '*.vtt')
         ]
         for i, ft in enumerate(filetypes):
