@@ -468,6 +468,28 @@ def html_to_webvtt(parser: AdvancedHTMLParser.AdvancedHTMLParser, media_path: st
                 vtt += f'{i+1}\n{start} --> {end}\n<v {spkr}>{txt.lstrip()}\n\n'
     return vtt
 
+def html_to_srt(parser: AdvancedHTMLParser.AdvancedHTMLParser):
+    def ms_to_srt_ts(ms: int) -> str:
+        s, ms = divmod(ms, 1000)
+        m, s = divmod(s, 60)
+        h, m = divmod(m, 60)
+        return f"{h:02d}:{m:02d}:{s:02d},{ms:03d}"
+        
+    srt = ''
+    segments = parser.getElementsByTagName('a')
+    for i in range(len(segments)):
+        segment = segments[i]
+        name = segment.attributes['name']
+        if name is not None:
+            name_elems = name.split('_', 4)
+            if len(name_elems) > 1 and name_elems[0] == 'ts':
+                start = ms_to_srt_ts(int(name_elems[1]))
+                end = ms_to_srt_ts(int(name_elems[2]))
+                spkr = name_elems[3]
+                txt = html_node_to_text(segment).strip().replace('\n\n', '\n')
+                srt += f'{i+1}\n{start} --> {end}\n[{spkr}] {txt}\n\n'
+    return srt
+
 # Transcription Job Management Classes
 
 class JobStatus(Enum):
@@ -747,7 +769,7 @@ def create_transcription_job(audio_file=None, transcript_file=None, start_time=N
     job.transcript_file = transcript_file or ''
     if job.transcript_file:
         job.file_ext = os.path.splitext(job.transcript_file)[1][1:]
-        if not job.file_ext in ['html', 'txt', 'vtt']:
+        if not job.file_ext in ['html', 'txt', 'vtt', 'srt']:
             raise Exception(t('err_unsupported_output_format', file_type=job.file_ext))
     
     # Time range
@@ -884,7 +906,7 @@ Examples:
     parser.add_argument('audio_file', nargs='?',
                        help='Input audio file path')
     parser.add_argument('output_file', nargs='?', 
-                       help='Output transcript file path (.html, .txt, or .vtt)')
+                       help='Output transcript file path (.html, .txt, .srt, or .vtt)')
     
     # Optional arguments
     parser.add_argument('--no-gui', action='store_true', default=False,
@@ -1160,7 +1182,7 @@ class SpeakerNamingDialog(ctk.CTkToplevel):
                              side='left', padx=(8, 4))
 
             entry_var = tk.StringVar(value=spk.get('matched_name') or '')
-            entry = ctk.CTkEntry(row, textvariable=entry_var, width=185,
+            entry = ctk.CTkEntry(row, textvariable=entry_var, width=140,
                                   placeholder_text=t('speaker_name_placeholder'))
             entry.pack(side='left', padx=4)
             self._entries[spk['label']] = entry_var
@@ -1180,6 +1202,21 @@ class SpeakerNamingDialog(ctk.CTkToplevel):
             ctk.CTkLabel(row, text=badge_text, text_color=badge_color,
                          width=46).pack(side='left', padx=2)
 
+            # Play button for speaker preview
+            if spk.get('audio_path') and spk.get('sample_start') is not None:
+                start_ms = spk['sample_start']
+                end_ms = spk['sample_end']
+                
+                play_btn = ctk.CTkButton(
+                    row, text="▶", width=30, height=24,
+                    command=lambda p=spk['audio_path'], s=start_ms, e=end_ms: self._play_audio(p, s, e)
+                )
+                play_btn.pack(side='left', padx=(4, 2))
+
+                # Add timestamp label after the play button
+                ts_text = f"{int(start_ms/1000)}s - {int(end_ms/1000)}s"
+                ctk.CTkLabel(row, text=ts_text, text_color="gray", width=50, font=ctk.CTkFont(size=10)).pack(side='left', padx=(2, 4))
+
             # Save checkbox (useful when we have an embedding, even if not matched)
             save_var = tk.BooleanVar(
                 value=bool(spk.get('embedding') is not None)
@@ -1189,14 +1226,6 @@ class SpeakerNamingDialog(ctk.CTkToplevel):
                                 variable=save_var, width=65).pack(
                                     side='left', padx=(4, 8))
             self._save_vars[spk['label']] = save_var
-
-            # Play button for speaker preview
-            if spk.get('audio_path') and spk.get('sample_start') is not None:
-                play_btn = ctk.CTkButton(
-                    row, text="▶", width=30, height=24,
-                    command=lambda p=spk['audio_path'], s=spk['sample_start'], e=spk['sample_end']: self._play_audio(p, s, e)
-                )
-                play_btn.pack(side='left', padx=(2, 4))
 
         # Buttons
         btn_frame = ctk.CTkFrame(self, fg_color="transparent")
@@ -1402,6 +1431,38 @@ class App(ctk.CTk):
         # self.frame_options.grid_configure .resizable(width=False, height=True)
         self.frame_options.grid_columnconfigure(0, weight=1, minsize=0)
         self.frame_options.grid_columnconfigure(1, weight=0)
+
+        # --- LIVE MODE OPTIONS ---
+        import sounddevice as sd
+        self.live_mode_frame = ctk.CTkFrame(self.scrollable_options, width=250, fg_color='transparent')
+        self.live_mode_frame.pack(padx=20, pady=10, anchor='w', fill='x')
+
+        self.live_mode_switch_var = ctk.BooleanVar(value=False)
+        self.live_mode_switch = ctk.CTkSwitch(self.live_mode_frame, text="Live Mode (Real-time)", 
+                                              variable=self.live_mode_switch_var, command=self._toggle_live_mode)
+        self.live_mode_switch.grid(row=0, column=0, columnspan=2, pady=(0, 10), sticky="w")
+        
+        self.input_device_label = ctk.CTkLabel(self.live_mode_frame, text="Input Device:")
+        self.input_device_label.grid(row=1, column=0, pady=5, sticky="w")
+
+        try:
+            devices = sd.query_devices()
+            input_devices = [f"{d['name']}" for d in devices if d['max_input_channels'] > 0]
+            if not input_devices:
+                input_devices = ["No input devices found"]
+        except Exception:
+            input_devices = ["Error loading devices"]
+
+        self.input_device_optionemenu = ctk.CTkOptionMenu(self.live_mode_frame, width=120, values=input_devices)
+        self.input_device_optionemenu.grid(row=1, column=1, pady=5, sticky="e")
+
+        if len(input_devices) > 0 and "BlackHole" in "".join(input_devices):
+            for dev in input_devices:
+                if "BlackHole" in dev:
+                    self.input_device_optionemenu.set(dev)
+                    break
+        
+        # -------------------------
 
         # Start/stop
         self.label_start = ctk.CTkLabel(self.frame_options, text=t('label_start'))
@@ -1623,6 +1684,11 @@ class App(ctk.CTk):
         self.log_textbox.pack(padx=5, pady=5, expand=True, fill='both')
         self.log_len = 0
         
+        # Create Live transcription window/textbox (hidden by default)
+        self.live_output_textbox = ctk.CTkTextbox(self.log_frame, wrap='word', state="disabled", font=("",20), text_color="white", bg_color='transparent', fg_color='transparent')
+        # It is packed in view_live_output()
+
+        
         self.log_progress_frame = ctk.CTkFrame(self.log_frame, fg_color='transparent')
         self.log_progress_frame.pack(padx=10, pady=10, fill='x', expand=False, anchor='center') 
         self.log_edit_btn = ctk.CTkButton(
@@ -1696,6 +1762,9 @@ class App(ctk.CTk):
         self.update_queue_table()
 
         self.update_scrollbar_visibility()
+        
+        # Toggle live mode correctly since log_textbox now exists
+        self._toggle_live_mode()
         
         self.log(translation_error, 'error') # will be empty if no error occurred        
 
@@ -2084,15 +2153,33 @@ class App(ctk.CTk):
                 self.queue_run_btn.configure(state=ctk.DISABLED)
 
             # Stop button: enabled if something is running or pending
-            if has_running or has_pending:
+            if has_running or has_pending or (hasattr(self, "live_mode_switch_var") and self.live_mode_switch_var.get()):
                 self.queue_stop_btn.configure(state=ctk.NORMAL)
             else:
                 self.queue_stop_btn.configure(state=ctk.DISABLED)
+            
+            # Special case for Run button in Live Mode
+            if hasattr(self, "live_mode_switch_var") and self.live_mode_switch_var.get():
+                self.queue_run_btn.configure(state=ctk.NORMAL)
+                if getattr(self, "live_process_running", False):
+                    self.queue_run_btn.configure(text="Stop Live")
+                else:
+                    self.queue_run_btn.configure(text="Start Live")
         except Exception:
             pass
 
     def on_queue_run(self):
         """Start processing pending jobs if idle."""
+        if hasattr(self, "live_mode_switch_var") and self.live_mode_switch_var.get():
+            if getattr(self, "live_process_running", False):
+                if hasattr(self, "live_queue"):
+                    self.live_queue.put({"action": "stop"})
+                self.queue_run_btn.configure(text=t('queue_run_button'))
+            else:
+                self._start_live_transcription()
+                self.queue_run_btn.configure(text="Stop Live")
+            return
+            
         try:
             has_running = len(self.queue.get_running_jobs()) > 0
             has_pending = self.queue.has_pending_jobs()
@@ -2103,6 +2190,101 @@ class App(ctk.CTk):
             self.update_queue_controls()
         except Exception:
             pass
+
+    def _toggle_live_mode(self):
+        """Toggle UI elements based on live mode switch"""
+        is_live = self.live_mode_switch_var.get()
+        if is_live:
+            self.input_device_optionemenu.configure(state="normal")
+            self.button_audio_file_name.configure(state="disabled")
+            self.button_audio_file.configure(state="disabled")
+            self.button_transcript_file_name.configure(state="disabled")
+            self.button_transcript_file.configure(state="disabled")
+            self.view_live_output()
+        else:
+            self.input_device_optionemenu.configure(state="disabled")
+            self.button_audio_file_name.configure(state="normal")
+            self.button_audio_file.configure(state="normal")
+            self.button_transcript_file_name.configure(state="normal")
+            self.button_transcript_file.configure(state="normal")
+            self.hide_live_output()
+
+    def view_live_output(self):
+        """Show the live transcription text box"""
+        self.tabview.set(t("tab_log"))
+        if self.log_textbox.winfo_ismapped():
+            self.log_textbox.pack_forget()
+        self.live_output_textbox.pack(padx=5, pady=5, expand=True, fill='both')
+
+    def hide_live_output(self):
+        """Hide the live transcription text box"""
+        if hasattr(self, 'live_output_textbox') and self.live_output_textbox.winfo_ismapped():
+            self.live_output_textbox.pack_forget()
+        self.log_textbox.pack(padx=5, pady=5, expand=True, fill='both')
+
+    def _start_live_transcription(self):
+        """Starts the live transcription background worker."""
+        if getattr(self, "live_process_running", False):
+            self.logn("Live transcription is already running.", "warn")
+            return
+            
+        import multiprocessing as mp
+        from live_mp_worker import live_proc_entrypoint
+
+        self.live_queue = mp.Queue()
+        
+        args = {
+            "locale": getattr(self, "current_locale", "en"),
+            "device": "auto" if platform.system() == "Darwin" else "cpu",
+            "model_name_or_path": self.option_menu_whisper_model.get(),
+            "input_device_id": self.input_device_optionemenu.get(), 
+            "language_code": self.option_menu_language.get(),
+            "vad_threshold": config.get("vad_threshold", 0.5),
+        }    
+        
+        self.live_process = mp.Process(target=live_proc_entrypoint, args=(args, self.live_queue))
+        self.live_process.start()
+        self.live_process_running = True
+        
+        self.logn("Live transcription started. Listening...", "info")
+        self.live_output_textbox.configure(state="normal")
+        self.live_output_textbox.delete("1.0", "end")
+        self.live_output_textbox.insert("end", "Listening for audio...\n\n")
+        self.live_output_textbox.configure(state="disabled")
+        
+        self.queue_run_btn.configure(text="Stop Live")
+        
+        self.after(500, self._check_live_queue)
+
+    def _check_live_queue(self):
+        """Periodically check the live queue for new transcriptions."""
+        if not getattr(self, "live_process_running", False):
+            return
+            
+        import queue
+        try:
+            while True:
+                msg = self.live_queue.get_nowait()
+                msg_type = msg.get("type")
+                
+                if msg_type == "live_segment":
+                    text = msg.get("text", "")
+                    self.live_output_textbox.configure(state="normal")
+                    self.live_output_textbox.insert("end", f"- {text}\n")
+                    self.live_output_textbox.see("end")
+                    self.live_output_textbox.configure(state="disabled")
+                elif msg_type == "log":
+                    self.logn(f"[Live] {msg.get('msg')}", msg.get("level", "info"))
+                elif msg_type == "live_finished":
+                    self.live_process_running = False
+                    self.logn("Live transcription ended.", "info")
+                    self.queue_run_btn.configure(text=t('queue_run_button'))
+                    return
+        except queue.Empty:
+            pass
+            
+        self.after(500, self._check_live_queue)
+
 
     def on_queue_stop(self, ask_before_canceling=True) -> bool:
         """Ask for confirmation, then cancel running job and mark all pending jobs as canceled.
@@ -2259,7 +2441,7 @@ class App(ctk.CTk):
                 return
 
         ext = os.path.splitext(file)[1][1:]
-        if file != '' and ext != 'html':
+        if file != '' and ext != 'html' and ext != 'srt':
             # wrong format
             file = ''
             if not tk.messagebox.askyesno(title='noScribe', message=t('err_editor_invalid_format')):
@@ -2449,7 +2631,7 @@ class App(ctk.CTk):
                                                 defaultextension=config['last_filetype'])
             if fn:
                 file_ext = os.path.splitext(fn)[1][1:].lower()
-                if not file_ext in ['html', 'txt', 'vtt']:
+                if not file_ext in ['html', 'txt', 'srt', 'vtt']:
                     tk.messagebox.showerror(title='noScribe', message=t('err_unsupported_output_format', file_type=file_ext))
                     return                    
                 self.transcript_files_list = [fn]
@@ -2519,7 +2701,10 @@ class App(ctk.CTk):
     def collect_transcription_options(self) -> TranscriptionQueue:
         """Collect all transcription options from UI and config and creates a 
         TranscriptionQueue for each audio file"""
-        # Validate required inputs
+        # Validate required inputs - bypass if Live Mode
+        if hasattr(self, "live_mode_switch_var") and self.live_mode_switch_var.get():
+             return TranscriptionQueue()
+
         if len(self.audio_files_list) == 0:
             raise ValueError(t('err_no_audio_file'))
         
@@ -2562,8 +2747,8 @@ class App(ctk.CTk):
                 pause=self.option_menu_pause.get(),  # Pass string value
                 cli_mode=False
             )
-            # Handle VTT format warnings in GUI mode
-            if job.file_ext == 'vtt' and (job.pause > 0 or job.overlapping or job.timestamps):
+            # Handle VTT/SRT format warnings in GUI mode
+            if job.file_ext in ['vtt', 'srt'] and (job.pause > 0 or job.overlapping or job.timestamps):
                 self.logn()
                 self.logn(t('err_vtt_invalid_options'), 'error')
             
@@ -3077,6 +3262,8 @@ class App(ctk.CTk):
                             txt = html_to_text(d)
                         elif job.file_ext == 'vtt':
                             txt = html_to_webvtt(d, job.audio_file)
+                        elif job.file_ext == 'srt':
+                            txt = html_to_srt(d)
                         else:
                             raise TypeError(f'Invalid file type "{job.file_ext}".')
                         try:
@@ -3347,9 +3534,22 @@ class App(ctk.CTk):
         finally:
             # hide progress
             self.set_progress(0, 0)
-            
     def create_job(self, enqueue=False):
         try:
+            # Bypass file list requirements if we are in Live Mode
+            if hasattr(self, "live_mode_switch_var") and self.live_mode_switch_var.get():
+                if getattr(self, "live_process_running", False):
+                    if hasattr(self, "live_queue"):
+                        self.live_queue.put({"action": "stop"})
+                    self.start_button.configure(text=t('bt_start_processing'))
+                else:
+                    self._start_live_transcription()
+                    try:
+                        self.start_button.configure(text="Stop Live")
+                    except Exception:
+                        pass
+                return
+                
             show_queue_tab = enqueue
             # Collect transcription options from UI
             new_queue = self.collect_transcription_options()
