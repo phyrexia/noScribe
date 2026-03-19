@@ -1,6 +1,6 @@
 fr:
   app_header: "Transcription audio alimentée par l'IA"
-  welcome_message: "Salut, noScribe est prêt !"
+  welcome_message: "Salut, MeetingGenie est prêt !"
   welcome_credits: >
 
     Version %{v}, Kai Dröge %{y}
@@ -18,7 +18,7 @@ fr:
     Profitez-en !
 
   setup_message: "Première exécution : Termine la configuration..."
-  new_release: "Une nouvelle version de noScribe est disponible (%{v}) :"
+  new_release: "Une nouvelle version de MeetingGenie est disponible (%{v}) :"
   new_release_download: "Télécharger : "
 
   # Éléments de l'interface utilisateur
@@ -133,7 +133,7 @@ fr:
     %{error}
 
     Basculer sur un traitement CPU et réessayer ?
-  err_noScribeEdit_not_found: "Erreur : Impossible de trouver l'éditeur noScribe."
+  err_MeetingGenieEdit_not_found: "Erreur : Impossible de trouver l'éditeur MeetingGenie."
   err_vtt_invalid_options: 'Avertissement : les options "Chevauchements de parole", "Marquer les pauses" et "Horodatage" ne sont pas prises en charge dans les fichiers VTT.'
   err_editor_invalid_format: "L'éditeur ne peut être utilisé qu'avec des fichiers HTML. Voulez-vous quand même le lancer ?"
   err_editor_no_file: "Aucune tâche de transcription terminée disponible. Démarrer l’éditeur quand même ?"
@@ -142,7 +142,7 @@ fr:
   log_open_partial: 'Ouverture de la transcription partielle : %{file}'
 
   # Contenu du document
-  doc_header: "Transcrit avec noScribe vers. %{version}"
+  doc_header: "Transcrit avec MeetingGenie vers. %{version}"
   doc_header_audio: "Fichier audio : %{file}"
   pause_minutes: '(%{minutes} minute[s] pause)'
   pause_seconds: '(%{seconds} secondes pause)'
@@ -154,8 +154,8 @@ fr:
   queue_tt_remove_waiting: 'Retirer de la file'
   queue_tt_remove_entry: 'Retirer de la liste'
   queue_tt_repeat_job: 'Relancer cette tâche'
-  queue_tt_edit_job: 'Ouvrir le résultat dans l’éditeur noScribe'
-  queue_tt_open_partial_job: 'Ouvrir le résultat partiel dans l’éditeur noScribe'
+  queue_tt_edit_job: 'Ouvrir le résultat dans l’éditeur MeetingGenie'
+  queue_tt_open_partial_job: 'Ouvrir le résultat partiel dans l’éditeur MeetingGenie'
 
   # Boutons supplémentaires de l’UI
   send_queue: 'Envoyer la tâche à la file'
@@ -165,7 +165,7 @@ fr:
   speaker_naming_title: 'Reconnaissance des locuteurs'
   speaker_naming_hint: >
     Entrez des noms pour les locuteurs détectés. Les locuteurs cochés auront leur
-    voix enregistrée afin que noScribe les reconnaisse automatiquement dans les enregistrements futurs.
+    voix enregistrée afin que MeetingGenie les reconnaisse automatiquement dans les enregistrements futurs.
   speaker_name_placeholder: 'Entrer un nom...'
   speaker_new_badge: 'Nouveau'
   speaker_save_checkbox: 'Enregistrer'

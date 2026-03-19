@@ -1,6 +1,6 @@
 de:
   app_header: KI-basierte Audio-Transkription
-  welcome_message: Hallo, noScribe ist bereit!
+  welcome_message: Hallo, MeetingGenie ist bereit!
   welcome_credits: >
     
     Version %{v}, Kai Dröge %{y}
@@ -19,7 +19,7 @@ de:
     Viel Erfolg!
 
   setup_message: 'Einrichtung abschließen...'
-  new_release: 'Eine neue Version von noScribe ist verfügbar (%{v}):'
+  new_release: 'Eine neue Version von MeetingGenie ist verfügbar (%{v}):'
   new_release_download: 'Download: '
 
   # UI Elements
@@ -134,7 +134,7 @@ de:
     %{error}
 
     Auf CPU-Verarbeitung umschalten und erneut versuchen?
-  err_noScribeEdit_not_found: 'Fehler: Der noScribe-Editor konnte nicht gefunden werden.'
+  err_MeetingGenieEdit_not_found: 'Fehler: Der MeetingGenie-Editor konnte nicht gefunden werden.'
   err_vtt_invalid_options: 'Achtung: Die Optionen "Überlappende Sprache", "Pausen markieren" und "Zeitmarken" werden bei der VTT-Ausgabe nicht unterstützt.'
   err_editor_invalid_format: 'Der Editor kann nur mit html-Dateien verwendet werden. Trotzdem starten?'
   err_editor_no_file: 'Kein abgeschlossener Transkriptionsauftrag verfügbar. Editor trotzdem starten?'
@@ -144,7 +144,7 @@ de:
 
 
   # Doc contents
-  doc_header: 'Transkribiert mit noScribe Vers. %{version}'
+  doc_header: 'Transkribiert mit MeetingGenie Vers. %{version}'
   doc_header_audio: 'Audiodatei: %{file}'
   pause_minutes: '(%{minutes} Minute[n] Pause)'
   pause_seconds: '(%{seconds} Sekunden Pause)'
@@ -156,8 +156,8 @@ de:
   queue_tt_remove_waiting: 'Aus der Warteschlange entfernen'
   queue_tt_remove_entry: 'Aus der Liste entfernen'
   queue_tt_repeat_job: 'Diesen Auftrag erneut ausführen'
-  queue_tt_edit_job: 'Ergebnis im noScribe-Editor öffnen'
-  queue_tt_open_partial_job: 'Teil-Ergebnis im noScribe-Editor öffnen'
+  queue_tt_edit_job: 'Ergebnis im MeetingGenie-Editor öffnen'
+  queue_tt_open_partial_job: 'Teil-Ergebnis im MeetingGenie-Editor öffnen'
 
   # Additional UI buttons
   send_queue: 'Auftrag in Warteschlange senden'
@@ -167,7 +167,7 @@ de:
   speaker_naming_title: 'Sprechererkennung'
   speaker_naming_hint: >
     Namen für die erkannten Sprecher eingeben. Aktivierte Sprecher werden mit ihrer
-    Stimme gespeichert, damit noScribe sie in künftigen Aufnahmen automatisch erkennt.
+    Stimme gespeichert, damit MeetingGenie sie in künftigen Aufnahmen automatisch erkennt.
   speaker_name_placeholder: 'Name eingeben...'
   speaker_new_badge: 'Neu'
   speaker_save_checkbox: 'Speichern'

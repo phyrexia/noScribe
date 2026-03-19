@@ -1,6 +1,6 @@
 ja:
   app_header: AIパワード音声転写
-  welcome_message: こんにちは、noScribeが準備完了です！
+  welcome_message: こんにちは、MeetingGenieが準備完了です！
   welcome_credits: >
     
     バージョン %{v}、Kai Dröge %{y}
@@ -19,7 +19,7 @@ ja:
     お楽しみください！
 
   setup_message: '初回実行：セットアップを完了してください...'
-  new_release: 'noScribe の新しいバージョンが利用可能です (%{v}):'
+  new_release: 'MeetingGenie の新しいバージョンが利用可能です (%{v}):'
   new_release_download: 'ダウンロード: '
 
   # UI要素
@@ -133,7 +133,7 @@ ja:
     %{error}
 
     CPU 処理に切り替えて再試行しますか？
-  err_noScribeEdit_not_found: 'エラー: noScribe エディターが見つかりませんでした。'
+  err_MeetingGenieEdit_not_found: 'エラー: MeetingGenie エディターが見つかりませんでした。'
   err_vtt_invalid_options: '警告: 「オーバーラッピング・スピーチ」、「マークはポーズをとる」と「タイムスタンプ」は VTT ファイルでサポートされていません。'
   err_editor_invalid_format: 'エディターは html ファイルでのみ使用できます。それでも起動しますか？'
   err_editor_no_file: '完了した転写ジョブがありません。エディターを起動しますか？'
@@ -142,7 +142,7 @@ ja:
   log_open_partial: "部分的な書き起こしを開く: %{file}"
 
   # ドキュメント内容
-  doc_header: 'noScribe vers. %{version}で転写されました'
+  doc_header: 'MeetingGenie vers. %{version}で転写されました'
   doc_header_audio: '音声ファイル：%{file}'
   pause_minutes: '(%{minutes}分[秒]休止)'
   pause_seconds: '(%{seconds}秒休止)'
@@ -154,8 +154,8 @@ ja:
   queue_tt_remove_waiting: 'キューから削除'
   queue_tt_remove_entry: 'リストから削除'
   queue_tt_repeat_job: 'このジョブを再実行'
-  queue_tt_edit_job: '結果を noScribe エディターで開く'
-  queue_tt_open_partial_job: "noScribe エディターで部分結果を開く"
+  queue_tt_edit_job: '結果を MeetingGenie エディターで開く'
+  queue_tt_open_partial_job: "MeetingGenie エディターで部分結果を開く"
 
   # 追加のUIボタン
   send_queue: 'ジョブをキューに送る'
@@ -165,7 +165,7 @@ ja:
   speaker_naming_title: '話者認識'
   speaker_naming_hint: >
     検出された話者に名前を入力してください。チェックした話者は声紋が保存され、
-    noScribeが将来の録音で自動的に認識できるようになります。
+    MeetingGenieが将来の録音で自動的に認識できるようになります。
   speaker_name_placeholder: '名前を入力...'
   speaker_new_badge: '新規'
   speaker_save_checkbox: '保存'

@@ -1,6 +1,6 @@
 ru:
   app_header: Транскрибация аудио с помощью искусственного интеллекта
-  welcome_message: Привет! noScribe готов к работе!
+  welcome_message: Привет! MeetingGenie готов к работе!
   welcome_credits: >
     
     Версия %{v}, Kai Dröge %{y}
@@ -19,7 +19,7 @@ ru:
     Приятной работы!
 
   setup_message: 'Первый запуск: Завершите настройку...'
-  new_release: 'Доступна новая версия noScribe (%{v}):'
+  new_release: 'Доступна новая версия MeetingGenie (%{v}):'
   new_release_download: 'Загрузить: '
 
   # Элементы пользовательского интерфейса
@@ -134,7 +134,7 @@ ru:
     %{error}
 
     Переключиться на обработку на CPU и повторить попытку?
-  err_noScribeEdit_not_found: 'Ошибка: не удалось найти редактор noScribe.'
+  err_MeetingGenieEdit_not_found: 'Ошибка: не удалось найти редактор MeetingGenie.'
   err_vtt_invalid_options: 'Предупреждение: параметры "Перекрытие речи", "Отметьте паузы" и "Временные метки" не поддерживаются в файлах VTT.'
   err_editor_invalid_format: 'Редактор может использоваться только с HTML-файлами. Запустить его все равно?'
   err_editor_no_file: 'Нет доступных завершённых заданий транскрипции. Запустить редактор всё равно?'
@@ -143,7 +143,7 @@ ru:
   log_open_partial: 'Открытие частичной транскрипции: %{file}'
 
   # Содержимое документа
-  doc_header: 'Транскрибировано с помощью noScribe версии %{version}'
+  doc_header: 'Транскрибировано с помощью MeetingGenie версии %{version}'
   doc_header_audio: 'Аудиофайл: %{file}'
   pause_minutes: '(%{minutes} минуты паузы)'
   pause_seconds: '(%{seconds} секунд паузы)'
@@ -155,8 +155,8 @@ ru:
   queue_tt_remove_waiting: 'Удалить из очереди'
   queue_tt_remove_entry: 'Удалить из списка'
   queue_tt_repeat_job: 'Повторить это задание'
-  queue_tt_edit_job: 'Открыть результат в редакторе noScribe'
-  queue_tt_open_partial_job: 'Открыть частичный результат в редакторе noScribe'
+  queue_tt_edit_job: 'Открыть результат в редакторе MeetingGenie'
+  queue_tt_open_partial_job: 'Открыть частичный результат в редакторе MeetingGenie'
 
   # Дополнительные кнопки UI
   send_queue: 'Отправить задание в очередь'
@@ -166,7 +166,7 @@ ru:
   speaker_naming_title: 'Распознавание дикторов'
   speaker_naming_hint: >
     Введите имена для обнаруженных дикторов. Отмеченные дикторы будут сохранены,
-    чтобы noScribe автоматически распознавал их в будущих записях.
+    чтобы MeetingGenie автоматически распознавал их в будущих записях.
   speaker_name_placeholder: 'Введите имя...'
   speaker_new_badge: 'Новый'
   speaker_save_checkbox: 'Сохранить'

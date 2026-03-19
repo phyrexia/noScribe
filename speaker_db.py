@@ -1,4 +1,4 @@
-# noScribe - Speaker Signature Database
+# MeetingGenie - Speaker Signature Database
 # Stores voice embeddings per identified speaker so they can be
 # recognized automatically across future transcriptions.
 
@@ -14,7 +14,7 @@ SIMILARITY_THRESHOLD = 0.75
 
 
 def _db_path() -> str:
-    config_dir = appdirs.user_config_dir('noScribe')
+    config_dir = appdirs.user_config_dir('MeetingGenie')
     return os.path.join(config_dir, 'speaker_signatures.json')
 
 

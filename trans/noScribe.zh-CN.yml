@@ -1,6 +1,6 @@
 zh-CN: &defaults
   app_header: 基于AI的音频转录
-  welcome_message: 你好，noScribe已准备就绪！
+  welcome_message: 你好，MeetingGenie已准备就绪！
   welcome_credits: >
 
     版本号：%{v}，Kai Dröge %{y}
@@ -18,7 +18,7 @@ zh-CN: &defaults
     祝您使用愉快！
 
   setup_message: '首次运行：完成设置...'
-  new_release: 'noScribe的新版本 (%{v})现已发布：'
+  new_release: 'MeetingGenie的新版本 (%{v})现已发布：'
   new_release_download: '下载：'
 
   # 用户界面元素
@@ -134,7 +134,7 @@ zh-CN: &defaults
     %{error}
 
     是否切换到 CPU 处理后重试？
-  err_noScribeEdit_not_found: '错误：找不到noScribe编辑器。'
+  err_MeetingGenieEdit_not_found: '错误：找不到MeetingGenie编辑器。'
   err_vtt_invalid_options: '警告：VTT文件不支持“重叠发言”、“标记停顿”和“时间戳”选项。'
   err_editor_invalid_format: '编辑器只能用于html文件。你仍然要启动它吗？'
   err_editor_no_file: '没有已完成的转录任务。仍要启动编辑器吗？'
@@ -143,7 +143,7 @@ zh-CN: &defaults
   log_open_partial: '正在打开部分转录：%{file}'
 
   # 文档内容
-  doc_header: '使用noScribe %{version} 版本转录'
+  doc_header: '使用MeetingGenie %{version} 版本转录'
   doc_header_audio: '音频文件：%{file}'
   pause_minutes: '(%{minutes} 分钟 暂停)'
   pause_seconds: '(%{seconds} 秒暂停)'
@@ -155,8 +155,8 @@ zh-CN: &defaults
   queue_tt_remove_waiting: '从队列中移除'
   queue_tt_remove_entry: '从列表中移除'
   queue_tt_repeat_job: '重复此任务'
-  queue_tt_edit_job: '在 noScribe 编辑器中打开结果'
-  queue_tt_open_partial_job: '在 noScribe 编辑器中打开部分结果'
+  queue_tt_edit_job: '在 MeetingGenie 编辑器中打开结果'
+  queue_tt_open_partial_job: '在 MeetingGenie 编辑器中打开部分结果'
 
   # 其他 UI 按钮
   send_queue: '发送任务到队列'
@@ -169,7 +169,7 @@ zh:
   speaker_naming_title: '说话人识别'
   speaker_naming_hint: >
     为检测到的说话人输入名称。勾选的说话人将保存其声音特征，
-    以便 noScribe 在未来的录音中自动识别他们。
+    以便 MeetingGenie 在未来的录音中自动识别他们。
   speaker_name_placeholder: '输入名称...'
   speaker_new_badge: '新'
   speaker_save_checkbox: '保存'

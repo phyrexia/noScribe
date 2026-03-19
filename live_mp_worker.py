@@ -1,31 +1,55 @@
 import gc
 import os
+import sys
+
+# Disable HuggingFace Hub symlink warnings (cosmetic only)
+os.environ["HF_HUB_DISABLE_SYMLINKS_WARNING"] = "1"
+
+# SSL bypass scoped only to local pyannote/HuggingFace Hub calls.
+# We patch only huggingface_hub's session, not the entire process.
+try:
+    import huggingface_hub.file_download as _hf_fd
+    _orig_hf_get = getattr(_hf_fd, "_request_wrapper", None)
+except Exception:
+    pass
+
+# Monkeypatch httpx only for HuggingFace Hub (not globally)
+try:
+    import huggingface_hub._commit_api as _hf_commit
+except Exception:
+    pass
+
+# Allow local-only model loading without network SSL errors
+os.environ["HUGGINGFACE_HUB_VERBOSITY"] = "error"
+
 import time
 import queue
 import platform
 import traceback
-import numpy as np
-import sounddevice as sd
-import torch
-import torchaudio
-from i18n import t
-
-def live_proc_entrypoint(args: dict, q: queue.Queue):
+def live_proc_entrypoint(args: dict, q: queue.Queue, stop_event=None):
     """
     Runs in a child process for Live Audio Capture, Transcription and Speaker Diarization.
     """
     try:
-        from faster_whisper import WhisperModel
-        from faster_whisper.vad import VadOptions
-        from pyannote.audio import Model as PyannoteModel
-        from pyannote.audio import Inference
-        import speaker_db
-
         def plog(level, msg):
             try:
                 q.put({"type": "log", "level": level, "msg": str(msg)})
             except Exception:
                 pass
+
+        plog("info", "Initializing Live Worker and loading ML libraries... This may take several seconds.")
+
+        import numpy as np
+        import sounddevice as sd
+        import torch
+        import torchaudio
+
+        from faster_whisper import WhisperModel
+        from faster_whisper.vad import VadOptions, get_speech_timestamps
+
+        from pyannote.audio import Model as PyannoteModel
+        from pyannote.audio import Inference
+        import speaker_db
 
         # I18N Initialization
         try:
@@ -39,20 +63,39 @@ def live_proc_entrypoint(args: dict, q: queue.Queue):
         except Exception:
             pass
 
-        device = args.get("device", "cpu")
-        model_size = args.get("model_name_or_path", "base")
+        cpu_threads = args.get("cpu_threads", 4)
         input_device_id = args.get("input_device_id", None)
         vad_threshold = float(args.get("vad_threshold", 0.5))
+        model_size_or_path = args.get("model_name_or_path", "base")
 
-        plog("info", f"Loading Whisper model '{model_size}' on '{device}' for Live Transcription...")
-        compute_type = args.get("compute_type", "float16" if device != "cpu" else "int8")
-        whisper_model = WhisperModel(
-            model_size,
-            device=device,
-            compute_type=compute_type,
-            cpu_threads=args.get("cpu_threads", 4),
-            local_files_only=args.get("local_files_only", True),
-        )
+        # Set threading env vars here, using the actual cpu_threads value
+        os.environ["OMP_NUM_THREADS"] = str(cpu_threads)
+        os.environ["MKL_NUM_THREADS"] = str(cpu_threads)
+
+        # CTranslate2 (faster-whisper backend) does NOT support MPS.
+        # Auto-detect: use CUDA if available, otherwise CPU.
+        requested_device = args.get("device", "auto")
+        if requested_device == "auto":
+            if torch.cuda.is_available():
+                device = "cuda"
+            else:
+                device = "cpu"
+        else:
+            device = requested_device
+
+        plog("info", f"Loading Whisper model from '{model_size_or_path}' on '{device}' for Live Transcription...")
+        compute_type = args.get("compute_type", "float16" if device == "cuda" else "int8")
+
+        try:
+            whisper_model = WhisperModel(
+                model_size_or_path,
+                device=device,
+                compute_type=compute_type,
+                cpu_threads=cpu_threads,
+                local_files_only=args.get("local_files_only", True),
+            )
+        except Exception as e:
+            raise e
 
         plog("info", f"Loading Pyannote Embedding model for Live Diarization...")
         try:
@@ -65,17 +108,22 @@ def live_proc_entrypoint(args: dict, q: queue.Queue):
             if os.path.exists(os.path.join(pyannote_dir, "pytorch_model.bin")):
                 embedding_model = PyannoteModel.from_pretrained(pyannote_dir)
             embedding_model.eval()
-            embedding_model.to(torch.device(device))
+            
+            torch_device = device
+            if device == "auto":
+                torch_device = "mps" if getattr(torch.backends, "mps", None) and torch.backends.mps.is_available() else "cpu"
+                
+            embedding_model.to(torch.device(torch_device))
             inference = Inference(embedding_model, window="whole")
         except Exception as e:
             plog("error", f"Failed to load embedding model: {e}")
             inference = None
 
-        # Load known speakers
+        # Load known speakers once into memory at startup (in-session cache)
         try:
-            speaker_db.init_db()
-            known_speakers = speaker_db.get_all_speakers()
-        except:
+            _db = speaker_db.load_db()
+            known_speakers = _db.get("speakers", [])
+        except Exception:
             known_speakers = []
 
         def identify_speaker(audio_chunk_np, sample_rate):
@@ -112,9 +160,10 @@ def live_proc_entrypoint(args: dict, q: queue.Queue):
                 return "Error Speaker"
 
         SAMPLE_RATE = 16000
-        CHUNK_DURATION = 1.0 # Read from audio source in 1 second chunks
-        VAD_WINDOW = 3.0 # Minimum seconds of audio to keep in buffer to check for VAD
-        MAX_BUFFER_SIZE = 15.0 # Max seconds to hold in buffer before forcing transcription
+        CHUNK_DURATION = 0.5  # Read from audio source in 0.5 second chunks (lower latency)
+        VAD_WINDOW = 2.0      # Minimum seconds of audio before checking for silence
+        SILENCE_TRIGGER = 0.8 # Seconds of trailing silence that trigger transcription
+        MAX_BUFFER_SIZE = 15.0 # Force transcription if buffer grows beyond this
 
         audio_buffer = np.array([], dtype=np.float32)
         
@@ -142,13 +191,9 @@ def live_proc_entrypoint(args: dict, q: queue.Queue):
                                 callback=audio_callback):
 
                 while True:
-                    try:
-                        cmd = q.get_nowait()
-                        if isinstance(cmd, dict) and cmd.get("action") == "stop":
-                            plog("info", "Stop signal received.")
-                            break
-                    except queue.Empty:
-                        pass
+                    if stop_event is not None and stop_event.is_set():
+                        plog("info", "Stop signal received via Event.")
+                        break
 
                     try:
                         chunk = audio_stream_queue.get(timeout=0.1)
@@ -159,9 +204,23 @@ def live_proc_entrypoint(args: dict, q: queue.Queue):
                     buffer_duration = len(audio_buffer) / SAMPLE_RATE
 
                     if buffer_duration >= VAD_WINDOW:
-                        # Only transcribe if we pass max buffer or (todo: silence detected)
-                        if buffer_duration >= MAX_BUFFER_SIZE or buffer_duration >= 5.0:
-                            
+                        # Detect trailing silence using VAD to decide when to transcribe
+                        should_transcribe = buffer_duration >= MAX_BUFFER_SIZE
+                        if not should_transcribe:
+                            try:
+                                speech_ts = get_speech_timestamps(audio_buffer, vad_parameters)
+                                if not speech_ts:
+                                    # Entire buffer is silence — skip without transcribing
+                                    audio_buffer = np.array([], dtype=np.float32)
+                                    continue
+                                last_speech_end_sec = speech_ts[-1]["end"] / SAMPLE_RATE
+                                trailing_silence = buffer_duration - last_speech_end_sec
+                                should_transcribe = trailing_silence >= SILENCE_TRIGGER
+                            except Exception:
+                                # Fallback: transcribe every 5s if VAD check fails
+                                should_transcribe = buffer_duration >= 5.0
+
+                        if should_transcribe:
                             segments, _ = whisper_model.transcribe(
                                 audio_buffer,
                                 language=args.get("language_code"),

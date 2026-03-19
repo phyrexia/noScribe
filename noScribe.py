@@ -49,8 +49,8 @@ if platform.system() == "Darwin": # = MAC
     if platform.machine() == "x86_64":
         os.environ['KMP_DUPLICATE_LIB_OK']='True' # prevent OMP: Error #15: Initializing libomp.dylib, but found libiomp5.dylib already initialized.
     # import torch.backends.mps # loading torch modules leads to segmentation fault later
-from faster_whisper.audio import decode_audio
-from faster_whisper.vad import VadOptions, get_speech_timestamps
+# faster_whisper imports are deferred to the transcription worker function
+# to avoid loading PyTorch/CTranslate2 at app startup (saves ~3-5s boot time)
 import AdvancedHTMLParser
 import html
 from threading import Thread
@@ -77,11 +77,12 @@ import shutil
 
 import utils
 import speaker_db
-import torchaudio
 
-# Patch for newer torchaudio versions that removed list_audio_backends
-if not hasattr(torchaudio, 'list_audio_backends'):
-    torchaudio.list_audio_backends = lambda: []
+def _patch_torchaudio():
+    """Apply the list_audio_backends compatibility patch lazily before worker launch."""
+    import torchaudio
+    if not hasattr(torchaudio, 'list_audio_backends'):
+        torchaudio.list_audio_backends = lambda: []
 
  # Pyinstaller fix, used to open multiple instances on Mac
 mp.freeze_support()
@@ -89,12 +90,13 @@ mp.freeze_support()
 logging.basicConfig()
 logging.getLogger("faster_whisper").setLevel(logging.DEBUG)
 
-app_version = '0.7'
+app_name = 'MeetingGenie'
+app_version = '1.0'
 app_year = '2025'
 app_dir = os.path.abspath(os.path.dirname(__file__))
 
 ctk.set_appearance_mode('dark')
-ctk.set_default_color_theme('blue')
+ctk.set_default_color_theme('dark-blue')
 
 default_html = """
 <!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.0//EN" "http://www.w3.org/TR/REC-html40/strict.dtd">
@@ -179,7 +181,7 @@ languages = {
 }
 
 # config
-config_dir = appdirs.user_config_dir('noScribe')
+config_dir = appdirs.user_config_dir('MeetingGenie')
 if not os.path.exists(config_dir):
     os.makedirs(config_dir)
 
@@ -254,6 +256,12 @@ def get_config(key: str, default) -> str:
 force_pyannote_cpu = get_config('force_pyannote_cpu', '').lower() == 'true'
 force_whisper_cpu = get_config('force_whisper_cpu', '').lower() == 'true'
 
+# Proxy / SSL settings for model downloads (important for corporate environments)
+# proxy_url: leave blank to use system proxy, or set e.g. 'http://proxy.corp.com:8080'
+# ignore_ssl: set to 'true' to bypass SSL verification (corporate MITM proxies)
+get_config('proxy_url', '')
+get_config('ignore_ssl', 'false')
+
 _CUDA_ERROR_KEYWORDS = (
     'cuda',
     'cublas',
@@ -326,7 +334,7 @@ def _show_startup_error(message: str) -> None:
     try:
         root = tk.Tk()
         root.withdraw()
-        tk.messagebox.showerror(title='noScribe', message=message)
+        tk.messagebox.showerror(title='MeetingGenie', message=message)
     except Exception as tk_error:
         print(f"ERROR: {message}", file=sys.stderr)
     finally:
@@ -349,7 +357,7 @@ if app_locale == 'auto': # read system locale settings
 i18n.set('fallback', 'en')
 
 translation_error = ''
-print('\nnoScribe')
+print('\nMeetingGenie')
 try:
     i18n.set('locale', app_locale)
     print(t('app_header'), '\n')
@@ -364,13 +372,13 @@ except Exception as locale_error:
         except Exception as english_error:
             print("Failed to load English fallback translation.")
             _show_startup_error(
-                'NoScribe could not load the English fallback translation and needs to close.'
+                'MeetingGenie could not load the English fallback translation and needs to close.'
             )
             raise SystemExit(1) from english_error
     else:
         print("English translation failed to load during startup.")
         _show_startup_error(
-            'noScribe could not load the English translation and needs to close.'
+            'MeetingGenie could not load the English translation and needs to close.'
         )
         raise SystemExit(1) from locale_error
 
@@ -745,7 +753,7 @@ class TranscriptionQueue:
         try:
             if self.has_output_conflict(transcript_file, ignore_job=ignore_job):
                 msg = t('output_override')
-                return tk.messagebox.askyesno(title='noScribe', message=msg)
+                return tk.messagebox.askyesno(title='MeetingGenie', message=msg)
         except Exception:
             pass
         return True
@@ -887,7 +895,7 @@ def create_job_from_cli_args(args) -> TranscriptionJob:
 def parse_cli_args():
     """Parse command line arguments"""
     parser = argparse.ArgumentParser(
-        description='noScribe - AI-powered Audio Transcription',
+        description='MeetingGenie - AI-powered Audio Transcription',
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
@@ -1167,24 +1175,29 @@ class SpeakerNamingDialog(ctk.CTkToplevel):
         ).pack(pady=(0, 8), padx=20)
 
         # Scrollable frame for speakers
-        visible = min(len(self._speakers_data), 6)
-        scroll_frame = ctk.CTkScrollableFrame(self, width=460,
-                                               height=visible * 56 + 10)
-        scroll_frame.pack(padx=15, pady=5, fill='x')
+        visible = min(len(self._speakers_data), 5)
+        scroll_frame = ctk.CTkScrollableFrame(self, width=620,
+                                               height=visible * 65 + 10)
+        scroll_frame.pack(padx=15, pady=10, fill='both', expand=True)
 
         for spk in self._speakers_data:
-            row = ctk.CTkFrame(scroll_frame)
-            row.pack(fill='x', padx=5, pady=3)
+            # Create a card-like row for each speaker
+            row = ctk.CTkFrame(scroll_frame, fg_color=("gray90", "gray16"), corner_radius=8)
+            row.pack(fill='x', padx=5, pady=5, ipadx=5, ipady=8)
 
-            ctk.CTkLabel(row, text=spk['short_label'],
+            # Left section: label and name entry
+            left_frame = ctk.CTkFrame(row, fg_color="transparent")
+            left_frame.pack(side='left', fill='y', padx=5)
+
+            ctk.CTkLabel(left_frame, text=spk['short_label'],
                          width=45,
-                         font=ctk.CTkFont(weight="bold")).pack(
-                             side='left', padx=(8, 4))
+                         font=ctk.CTkFont(weight="bold", size=14)).pack(
+                             side='left', padx=(5, 5))
 
             entry_var = tk.StringVar(value=spk.get('matched_name') or '')
-            entry = ctk.CTkEntry(row, textvariable=entry_var, width=140,
-                                  placeholder_text=t('speaker_name_placeholder'))
-            entry.pack(side='left', padx=4)
+            entry = ctk.CTkEntry(left_frame, textvariable=entry_var, width=150,
+                                  placeholder_text=t('speaker_name_placeholder'), height=28)
+            entry.pack(side='left', padx=5)
             self._entries[spk['label']] = entry_var
 
             # Confidence badge
@@ -1192,39 +1205,57 @@ class SpeakerNamingDialog(ctk.CTkToplevel):
             sim = spk.get('similarity', 0.0)
             if matched and sim >= speaker_db.SIMILARITY_THRESHOLD:
                 badge_text = f"{int(sim * 100)}%"
-                badge_color = "#4CAF50"
+                badge_color = "#388E3C" # Deeper green for better readability
             elif sim > 0.55:
                 badge_text = f"~{int(sim * 100)}%"
-                badge_color = "#FF9800"
+                badge_color = "#F57C00" # Deeper orange
             else:
                 badge_text = t('speaker_new_badge')
                 badge_color = "#78909C"
-            ctk.CTkLabel(row, text=badge_text, text_color=badge_color,
-                         width=46).pack(side='left', padx=2)
+            ctk.CTkLabel(left_frame, text=badge_text, text_color=badge_color,
+                         width=46, font=ctk.CTkFont(weight="bold")).pack(side='left', padx=5)
 
-            # Play button for speaker preview
-            if spk.get('audio_path') and spk.get('sample_start') is not None:
-                start_ms = spk['sample_start']
-                end_ms = spk['sample_end']
+            # Middle section: Samples
+            samples_frame = ctk.CTkFrame(row, fg_color="transparent")
+            samples_frame.pack(side='left', expand=True, fill='x', padx=10)
+            
+            # Play button for speaker preview(s)
+            if spk.get('audio_path') and spk.get('samples'):
+                audio_path = spk['audio_path']
                 
-                play_btn = ctk.CTkButton(
-                    row, text="▶", width=30, height=24,
-                    command=lambda p=spk['audio_path'], s=start_ms, e=end_ms: self._play_audio(p, s, e)
-                )
-                play_btn.pack(side='left', padx=(4, 2))
+                def format_ms(msecs):
+                    secs = int(msecs / 1000)
+                    return f"{secs // 60:02d}:{secs % 60:02d}"
 
-                # Add timestamp label after the play button
-                ts_text = f"{int(start_ms/1000)}s - {int(end_ms/1000)}s"
-                ctk.CTkLabel(row, text=ts_text, text_color="gray", width=50, font=ctk.CTkFont(size=10)).pack(side='left', padx=(2, 4))
+                for idx, sample in enumerate(spk['samples']):
+                    sample_box = ctk.CTkFrame(samples_frame, fg_color="transparent")
+                    sample_box.pack(side='left', padx=5)
+                    
+                    start_ms = sample['start']
+                    end_ms = sample['end']
+                    
+                    play_btn = ctk.CTkButton(
+                        sample_box, text=f"▶ {idx+1}", width=35, height=24,
+                        fg_color="#1976D2", hover_color="#1565C0",
+                        font=ctk.CTkFont(size=12, weight="bold"),
+                        command=lambda p=audio_path, s=start_ms, e=end_ms: self._play_audio(p, s, e)
+                    )
+                    play_btn.pack(side='left', padx=(0, 4))
 
-            # Save checkbox (useful when we have an embedding, even if not matched)
+                    ts_text = f"{format_ms(start_ms)} - {format_ms(end_ms)}"
+                    ctk.CTkLabel(sample_box, text=ts_text, text_color="gray", font=ctk.CTkFont(size=11)).pack(side='left')
+
+            # Right section: Save Checkbox
+            right_frame = ctk.CTkFrame(row, fg_color="transparent")
+            right_frame.pack(side='right', padx=5)
+
             save_var = tk.BooleanVar(
                 value=bool(spk.get('embedding') is not None)
             )
             if spk.get('embedding') is not None:
-                ctk.CTkCheckBox(row, text=t('speaker_save_checkbox'),
+                ctk.CTkCheckBox(right_frame, text=t('speaker_save_checkbox'),
                                 variable=save_var, width=65).pack(
-                                    side='left', padx=(4, 8))
+                                    side='right', padx=(4, 8))
             self._save_vars[spk['label']] = save_var
 
         # Buttons
@@ -1319,7 +1350,7 @@ def _init_app_state(app):
     if not os.path.exists(whisper_models_readme):
         with open(whisper_models_readme, 'w') as file:
             file.write('You can download custom Whisper-models for the transcription into this folder. \n'
-                       'See here for more information: https://github.com/kaixxx/noScribe/wiki/Add-custom-Whisper-models-for-transcription')
+                       'See the MeetingGenie documentation for more information on custom models.')
 
     app.queue = TranscriptionQueue()
     app.audio_files_list = []
@@ -1346,7 +1377,7 @@ class App(ctk.CTk):
         _init_app_state(self)
 
         # configure window
-        self.title('noScribe - ' + t('app_header'))
+        self.title('MeetingGenie - ' + t('app_header'))
         if platform.system() in ("Darwin", "Linux"):
             self.geometry(f"{1100}x{765}")
         else:
@@ -1367,12 +1398,42 @@ class App(ctk.CTk):
         self.frame_header_logo.pack(anchor='w', side='left')
 
         # logo
-        self.logo_label = ctk.CTkLabel(self.frame_header_logo, text="noScribe", font=ctk.CTkFont(size=42, weight="bold"))
-        self.logo_label.pack(padx=20, pady=[40, 0], anchor='w')
+        self.logo_label = ctk.CTkLabel(self.frame_header_logo, text="MeetingGenie", font=ctk.CTkFont(family="Helvetica Neue", size=48, weight="bold"), text_color="#0A84FF")
+        self.logo_label.pack(padx=20, pady=[35, 0], anchor='w')
 
         # sub header
-        self.header_label = ctk.CTkLabel(self.frame_header_logo, text=t('app_header'), font=ctk.CTkFont(size=16, weight="bold"))
+        self.header_label = ctk.CTkLabel(self.frame_header_logo, text=t('app_header'), font=ctk.CTkFont(family="Helvetica Neue", size=15, weight="normal"), text_color="lightgray")
         self.header_label.pack(padx=20, pady=[0, 20], anchor='w')
+
+        # Live Mode Header Button
+        self.btn_live_mode_header = ctk.CTkButton(
+            self.frame_header, text="⏺ Live Mode", font=ctk.CTkFont(family="Helvetica Neue", weight="bold", size=15),
+            fg_color="#D84315", hover_color="#BF360C", width=140, height=40, corner_radius=12,
+            command=self._click_live_mode_header
+        )
+        self.btn_live_mode_header.pack(side='right', padx=(0, 20), pady=30)
+        
+        # Live Input Device OptionMenu
+        import sounddevice as sd
+        try:
+            devices = sd.query_devices()
+            input_devices = [f"{d['name']}" for d in devices if d['max_input_channels'] > 0]
+            if not input_devices:
+                input_devices = ["No input devices found"]
+        except Exception:
+            input_devices = ["Error loading devices"]
+
+        self.input_device_optionemenu = ctk.CTkOptionMenu(
+            self.frame_header, width=180, height=40, values=input_devices, 
+            font=ctk.CTkFont(size=13)
+        )
+        if len(input_devices) > 0 and "BlackHole" in "".join(input_devices):
+            for dev in input_devices:
+                if "BlackHole" in dev:
+                    self.input_device_optionemenu.set(dev)
+                    break
+        self.input_device_optionemenu.pack(side='right', padx=(0, 10), pady=30)
+        
         # graphic
         self.header_graphic = ctk.CTkImage(dark_image=Image.open(os.path.join(app_dir, 'graphic_sw.png')), size=(926,119))
         self.header_graphic_label = ctk.CTkLabel(self.frame_header, image=self.header_graphic, text='')
@@ -1432,35 +1493,6 @@ class App(ctk.CTk):
         self.frame_options.grid_columnconfigure(0, weight=1, minsize=0)
         self.frame_options.grid_columnconfigure(1, weight=0)
 
-        # --- LIVE MODE OPTIONS ---
-        import sounddevice as sd
-        self.live_mode_frame = ctk.CTkFrame(self.scrollable_options, width=250, fg_color='transparent')
-        self.live_mode_frame.pack(padx=20, pady=10, anchor='w', fill='x')
-
-        self.live_mode_switch_var = ctk.BooleanVar(value=False)
-        self.live_mode_switch = ctk.CTkSwitch(self.live_mode_frame, text="Live Mode (Real-time)", 
-                                              variable=self.live_mode_switch_var, command=self._toggle_live_mode)
-        self.live_mode_switch.grid(row=0, column=0, columnspan=2, pady=(0, 10), sticky="w")
-        
-        self.input_device_label = ctk.CTkLabel(self.live_mode_frame, text="Input Device:")
-        self.input_device_label.grid(row=1, column=0, pady=5, sticky="w")
-
-        try:
-            devices = sd.query_devices()
-            input_devices = [f"{d['name']}" for d in devices if d['max_input_channels'] > 0]
-            if not input_devices:
-                input_devices = ["No input devices found"]
-        except Exception:
-            input_devices = ["Error loading devices"]
-
-        self.input_device_optionemenu = ctk.CTkOptionMenu(self.live_mode_frame, width=120, values=input_devices)
-        self.input_device_optionemenu.grid(row=1, column=1, pady=5, sticky="e")
-
-        if len(input_devices) > 0 and "BlackHole" in "".join(input_devices):
-            for dev in input_devices:
-                if "BlackHole" in dev:
-                    self.input_device_optionemenu.set(dev)
-                    break
         
         # -------------------------
 
@@ -1493,14 +1525,14 @@ class App(ctk.CTk):
         # Whisper Model Selection   
         class CustomCTkOptionMenu(ctk.CTkOptionMenu):
             # Custom version that reads available models on drop down
-            def __init__(self, noScribe_parent, master, width = 140, height = 28, corner_radius = None, bg_color = "transparent", fg_color = None, button_color = None, button_hover_color = None, text_color = None, text_color_disabled = None, dropdown_fg_color = None, dropdown_hover_color = None, dropdown_text_color = None, font = None, dropdown_font = None, values = None, variable = None, state = tk.NORMAL, hover = True, command = None, dynamic_resizing = True, anchor = "w", **kwargs):
+            def __init__(self, app_parent, master, width = 140, height = 28, corner_radius = None, bg_color = "transparent", fg_color = None, button_color = None, button_hover_color = None, text_color = None, text_color_disabled = None, dropdown_fg_color = None, dropdown_hover_color = None, dropdown_text_color = None, font = None, dropdown_font = None, values = None, variable = None, state = tk.NORMAL, hover = True, command = None, dynamic_resizing = True, anchor = "w", **kwargs):
                 super().__init__(master, width, height, corner_radius, bg_color, fg_color, button_color, button_hover_color, text_color, text_color_disabled, dropdown_fg_color, dropdown_hover_color, dropdown_text_color, font, dropdown_font, values, variable, state, hover, command, dynamic_resizing, anchor, **kwargs)
-                self.noScribe_parent = noScribe_parent
+                self.app_parent = app_parent
                 self.old_value = ''
 
             def _clicked(self, event=0):
                 self.old_value = self.get()
-                self._values = self.noScribe_parent.get_whisper_models()
+                self._values = self.app_parent.get_whisper_models()
                 self._values.append('--------------------')
                 self._values.append(t('label_add_custom_models'))
                 self._dropdown_menu.configure(values=self._values)
@@ -1511,7 +1543,7 @@ class App(ctk.CTk):
                     return
                 if value == self._values[-1]:  # Add custom model
                     # show custom model folder
-                    path = self.noScribe_parent.user_models_dir
+                    path = self.app_parent.user_models_dir
                     try:
                         os_type = platform.system()
                         if os_type == "Windows":
@@ -1523,7 +1555,7 @@ class App(ctk.CTk):
                         else:
                             raise OSError(f"Unsupported operating system: {os_type}")
                     except Exception as e:
-                        self.noScribe_parent.logn(f"Failed to open folder: {e}")
+                        self.app_parent.logn(f"Failed to open folder: {e}")
                 else:
                     super()._dropdown_callback(value)
         
@@ -1594,6 +1626,14 @@ class App(ctk.CTk):
             self.check_box_timestamps.select()
         else:
             self.check_box_timestamps.deselect()
+
+        # Anthropic API Key
+        self.label_anthropic_key = ctk.CTkLabel(self.frame_options, text="Anthropic API Key")
+        self.label_anthropic_key.grid(column=0, row=9, sticky='w', pady=5)
+        
+        self.entry_anthropic_key = ctk.CTkEntry(self.frame_options, width=120, show="*")
+        self.entry_anthropic_key.grid(column=1, row=9, sticky='e', pady=5)
+        self.entry_anthropic_key.insert(0, config.get('anthropic_api_key', ''))
         
         # Start control: single CTkOptionMenu styled like a button
         # Create a container so we can show/hide as one control
@@ -1605,7 +1645,7 @@ class App(ctk.CTk):
             - Left-click (main area) runs Start immediately.
             - Clicking the arrow opens a dropdown with 'Send to queue'.
             """
-            def __init__(self, noScribe_parent, master, **kwargs):
+            def __init__(self, app_parent, master, **kwargs):
                 # Style to match CTkButton
                 btn_theme = ctk.ThemeManager.theme.get('CTkButton', {})
                 kwargs.setdefault('height', 42)
@@ -1616,7 +1656,7 @@ class App(ctk.CTk):
                 kwargs.setdefault('button_hover_color', btn_theme.get('hover_color'))
 
                 super().__init__(master, values=['Start'], **kwargs)
-                self.noScribe_parent = noScribe_parent
+                self.app_parent = app_parent
                 try:
                     self.set(t('start_button'))
                 except Exception:
@@ -1639,7 +1679,7 @@ class App(ctk.CTk):
             def _dropdown_callback(self, value: str):
                 if value == t('send_queue'):
                     try:
-                        self.noScribe_parent.create_job(enqueue=True)
+                        self.app_parent.create_job(enqueue=True)
                     finally:
                         try:
                             self.set(t('start_button'))
@@ -1647,7 +1687,7 @@ class App(ctk.CTk):
                             self.set('Start')
                 elif value == t('start_queue'):
                     try:
-                        self.noScribe_parent.create_job(enqueue=False)
+                        self.app_parent.create_job(enqueue=False)
                     finally:
                         try:
                             self.set(t('start_button'))
@@ -1658,7 +1698,7 @@ class App(ctk.CTk):
 
             def _on_text_label_click(self, event):
                 try:
-                    self.noScribe_parent.create_job(enqueue=False)
+                    self.app_parent.create_job(enqueue=False)
                 except Exception:
                     pass
                 return "break"
@@ -1670,7 +1710,7 @@ class App(ctk.CTk):
         self.frame_right = ctk.CTkFrame(self.frame_main, corner_radius=0, fg_color='transparent')
         self.frame_right.pack(padx=0, pady=0, fill='both', expand=True, side='top')
         
-        self.tabview = ctk.CTkTabview(self.frame_right, anchor="nw", border_width=0, fg_color='transparent', corner_radius=0)
+        self.tabview = ctk.CTkTabview(self.frame_right, anchor="nw", border_width=0, fg_color='#1E1E1E', corner_radius=12, segmented_button_selected_color="#0A84FF", segmented_button_selected_hover_color="#0062CC")
         self.tabview.pack(padx=[10,30], pady=[0,30], fill='both', expand=True, side='top')
         self.tab_log = self.tabview.add(t("tab_log")) 
         self.tab_queue = self.tabview.add(t("tab_queue")) 
@@ -1678,14 +1718,14 @@ class App(ctk.CTk):
 
         self.log_frame = ctk.CTkFrame(self.tab_log, fg_color='transparent', border_width=1, corner_radius=0)
         self.log_frame.pack(padx=0, pady=0, expand=True, fill='both')
-        self.log_textbox = ctk.CTkTextbox(self.log_frame, wrap='word', state="disabled", font=("",16), text_color="lightgray", bg_color='transparent', fg_color='transparent')
-        self.log_textbox.tag_config('highlight', foreground='darkorange')
-        self.log_textbox.tag_config('error', foreground='yellow')
+        self.log_textbox = ctk.CTkTextbox(self.log_frame, wrap='word', state="disabled", font=("Helvetica Neue",16), text_color="#EBEBF5", bg_color='transparent', fg_color='transparent')
+        self.log_textbox.tag_config('highlight', foreground='#0A84FF')
+        self.log_textbox.tag_config('error', foreground='#FF453A')
         self.log_textbox.pack(padx=5, pady=5, expand=True, fill='both')
         self.log_len = 0
         
         # Create Live transcription window/textbox (hidden by default)
-        self.live_output_textbox = ctk.CTkTextbox(self.log_frame, wrap='word', state="disabled", font=("",20), text_color="white", bg_color='transparent', fg_color='transparent')
+        self.live_output_textbox = ctk.CTkTextbox(self.log_frame, wrap='word', state="disabled", font=("Helvetica Neue",20), text_color="white", bg_color='transparent', fg_color='transparent')
         # It is packed in view_live_output()
 
         
@@ -1699,6 +1739,14 @@ class App(ctk.CTk):
             command=lambda: self.launch_editor()
         )
         self.log_edit_btn.pack(side='right', padx=(0, 0), pady=0)
+        
+        self.log_summarize_btn = ctk.CTkButton(
+            self.log_progress_frame,
+            text='✨ Generar Resumen',
+            width=130,
+            command=self.on_summarize_log
+        )
+        self.log_summarize_btn.pack(side='right', padx=(0, 10), pady=0)
         self.log_stop_btn = ctk.CTkButton(
             self.log_progress_frame,
             text=t('stop_button'),
@@ -1763,8 +1811,7 @@ class App(ctk.CTk):
 
         self.update_scrollbar_visibility()
         
-        # Toggle live mode correctly since log_textbox now exists
-        self._toggle_live_mode()
+
         
         self.log(translation_error, 'error') # will be empty if no error occurred        
 
@@ -1795,21 +1842,33 @@ class App(ctk.CTk):
     # Events and Methods
 
     def get_whisper_models(self):
+        import model_manager
         self.whisper_model_paths = {}
-        
-        def collect_models(dir):        
+
+        def collect_models(dir):
+            if not os.path.isdir(dir):
+                return
             for entry in os.listdir(dir):
                 entry_path = os.path.join(dir, entry)
                 if os.path.isdir(entry_path):
                     if entry in self.whisper_model_paths:
                         self.logn(t('err_invalid_model', entry), 'error')
                     else:
-                        self.whisper_model_paths[entry]=entry_path 
-       
-        # collect system models:
-        collect_models(os.path.join(app_dir, 'models'))
-        
-        # collect user defined models:        
+                        self.whisper_model_paths[entry] = entry_path
+
+        # On-demand models (downloaded by model_manager into user data dir)
+        for quality in ('fast', 'precise'):
+            if model_manager.model_is_ready(quality):
+                path = model_manager.get_model_path_for_app(quality)
+                if path:
+                    self.whisper_model_paths[quality] = path
+
+        # Bundled models in app_dir/models (backwards compat, usually empty now)
+        bundled_models = os.path.join(app_dir, 'models')
+        if os.path.isdir(bundled_models):
+            collect_models(bundled_models)
+
+        # User-defined custom models
         collect_models(self.user_models_dir)
 
         return list(self.whisper_model_paths.keys())
@@ -1822,17 +1881,22 @@ class App(ctk.CTk):
         self.update_scrollbar_visibility()
 
     def update_scrollbar_visibility(self):
-        # Get the size of the scroll region and current canvas size
-        canvas = self.scrollable_options._parent_canvas  
-        scroll_region_height = canvas.bbox("all")[3]
-        canvas_height = canvas.winfo_height()        
-        
-        scrollbar = self.scrollable_options._scrollbar
+        try:
+            # Get the size of the scroll region and current canvas size
+            canvas = self.scrollable_options._parent_canvas  
+            if not canvas.winfo_exists():
+                return
+            scroll_region_height = canvas.bbox("all")[3]
+            canvas_height = canvas.winfo_height()        
+            
+            scrollbar = self.scrollable_options._scrollbar
 
-        if scroll_region_height > canvas_height:
-            scrollbar.grid()
-        else:
-            scrollbar.grid_remove()  # Hide the scrollbar if not needed    
+            if scroll_region_height > canvas_height:
+                scrollbar.grid()
+            else:
+                scrollbar.grid_remove()  # Hide the scrollbar if not needed   
+        except Exception:
+            pass
                         
     def update_queue_table(self):
         """Update the queue table by diffing: update existing rows, add new ones, remove missing."""
@@ -2157,57 +2221,36 @@ class App(ctk.CTk):
                 self.queue_stop_btn.configure(state=ctk.NORMAL)
             else:
                 self.queue_stop_btn.configure(state=ctk.DISABLED)
-            
-            # Special case for Run button in Live Mode
-            if hasattr(self, "live_mode_switch_var") and self.live_mode_switch_var.get():
-                self.queue_run_btn.configure(state=ctk.NORMAL)
-                if getattr(self, "live_process_running", False):
-                    self.queue_run_btn.configure(text="Stop Live")
-                else:
-                    self.queue_run_btn.configure(text="Start Live")
+
         except Exception:
             pass
 
-    def on_queue_run(self):
-        """Start processing pending jobs if idle."""
-        if hasattr(self, "live_mode_switch_var") and self.live_mode_switch_var.get():
-            if getattr(self, "live_process_running", False):
-                if hasattr(self, "live_queue"):
-                    self.live_queue.put({"action": "stop"})
-                self.queue_run_btn.configure(text=t('queue_run_button'))
-            else:
-                self._start_live_transcription()
-                self.queue_run_btn.configure(text="Stop Live")
-            return
+    def _click_live_mode_header(self):
+        if getattr(self, "live_process_running", False):
+            # Stop it
+            if hasattr(self, "live_stop_event"):
+                self.live_stop_event.set()
+            self.btn_live_mode_header.configure(text="⏺ Live Mode", fg_color="#D84315", hover_color="#BF360C")
             
-        try:
-            has_running = len(self.queue.get_running_jobs()) > 0
-            has_pending = self.queue.has_pending_jobs()
-            if (not has_running) and has_pending:
-                wkr = Thread(target=self.transcription_worker, args=(), daemon=True)
-                self._worker_threads.append(wkr)
-                wkr.start()
-            self.update_queue_controls()
-        except Exception:
-            pass
-
-    def _toggle_live_mode(self):
-        """Toggle UI elements based on live mode switch"""
-        is_live = self.live_mode_switch_var.get()
-        if is_live:
-            self.input_device_optionemenu.configure(state="normal")
-            self.button_audio_file_name.configure(state="disabled")
-            self.button_audio_file.configure(state="disabled")
-            self.button_transcript_file_name.configure(state="disabled")
-            self.button_transcript_file.configure(state="disabled")
-            self.view_live_output()
-        else:
-            self.input_device_optionemenu.configure(state="disabled")
+            # Re-enable UI
             self.button_audio_file_name.configure(state="normal")
             self.button_audio_file.configure(state="normal")
             self.button_transcript_file_name.configure(state="normal")
             self.button_transcript_file.configure(state="normal")
+            self.queue_run_btn.configure(state="normal")
             self.hide_live_output()
+        else:
+            # Start it
+            self._start_live_transcription()
+            self.btn_live_mode_header.configure(text="⏹ Stop Live", fg_color="#C62828", hover_color="#b71c1c")
+            
+            # Disable conventional UI and show text box
+            self.button_audio_file_name.configure(state="disabled")
+            self.button_audio_file.configure(state="disabled")
+            self.button_transcript_file_name.configure(state="disabled")
+            self.button_transcript_file.configure(state="disabled")
+            self.queue_run_btn.configure(state="disabled")
+            self.view_live_output()
 
     def view_live_output(self):
         """Show the live transcription text box"""
@@ -2230,19 +2273,45 @@ class App(ctk.CTk):
             
         import multiprocessing as mp
         from live_mp_worker import live_proc_entrypoint
+        _patch_torchaudio()  # lazy torchaudio patch before spawning live worker
 
         self.live_queue = mp.Queue()
+        self.live_stop_event = mp.Event()
         
+        import model_manager
+        model_name = self.option_menu_whisper_model.get()
+        if model_name in ('fast', 'precise') and not model_manager.model_is_ready(model_name):
+            proxy_url, ignore_ssl = model_manager.get_proxy_from_config(config)
+            self.logn(f"Downloading '{model_name}' model for live transcription...", 'info')
+            try:
+                model_manager.download_model(model_name, proxy_url=proxy_url, ignore_ssl=ignore_ssl)
+                self.get_whisper_models()
+            except Exception as dl_err:
+                self.logn(f"Model download failed: {dl_err}\nCheck proxy_url / ignore_ssl in config.yml.", 'error')
+                return
+        model_path = self.whisper_model_paths.get(model_name, model_name)
+        
+        language_name = self.option_menu_language.get()
+        language_code = None
+        # Handle 'Auto', 'Multilingual' and proper languages
+        if language_name not in ('Auto', 'Multilingual'):
+            try:
+                language_code = languages[language_name]
+            except Exception:
+                pass
+                
         args = {
             "locale": getattr(self, "current_locale", "en"),
             "device": "auto" if platform.system() == "Darwin" else "cpu",
-            "model_name_or_path": self.option_menu_whisper_model.get(),
+            "compute_type": config.get("whisper_compute_type", "int8"),
+            "model_name_or_path": model_path,
             "input_device_id": self.input_device_optionemenu.get(), 
-            "language_code": self.option_menu_language.get(),
+            "language_code": language_code,
+            "language_name": language_name,
             "vad_threshold": config.get("vad_threshold", 0.5),
-        }    
+        }
         
-        self.live_process = mp.Process(target=live_proc_entrypoint, args=(args, self.live_queue))
+        self.live_process = mp.Process(target=live_proc_entrypoint, args=(args, self.live_queue, self.live_stop_event))
         self.live_process.start()
         self.live_process_running = True
         
@@ -2251,8 +2320,6 @@ class App(ctk.CTk):
         self.live_output_textbox.delete("1.0", "end")
         self.live_output_textbox.insert("end", "Listening for audio...\n\n")
         self.live_output_textbox.configure(state="disabled")
-        
-        self.queue_run_btn.configure(text="Stop Live")
         
         self.after(500, self._check_live_queue)
 
@@ -2292,7 +2359,7 @@ class App(ctk.CTk):
         try:
             if (ask_before_canceling and
                    (self.queue.is_running() or self.queue.has_pending_jobs()) and 
-                   not tk.messagebox.askyesno(title='noScribe', message=t('queue_cancel_all_confirm'))):
+                   not tk.messagebox.askyesno(title='MeetingGenie', message=t('queue_cancel_all_confirm'))):
                 return False
             # Mark waiting jobs as canceled immediately
             for job in self.queue.get_waiting_jobs():
@@ -2316,7 +2383,7 @@ class App(ctk.CTk):
         try:
             if job.status == JobStatus.WAITING:
                 # Confirm deletion of waiting job
-                if tk.messagebox.askyesno(title='noScribe', message=t('queue_remove_waiting')):
+                if tk.messagebox.askyesno(title='MeetingGenie', message=t('queue_remove_waiting')):
                     try:
                         self.queue.jobs.remove(job)
                     except ValueError:
@@ -2324,7 +2391,7 @@ class App(ctk.CTk):
                     self.update_queue_table()
             elif job.status in [JobStatus.AUDIO_CONVERSION, JobStatus.SPEAKER_IDENTIFICATION, JobStatus.TRANSCRIPTION]:
                 # Confirm cancel of running job
-                if tk.messagebox.askyesno(title='noScribe', message=t('transcription_canceled')):
+                if tk.messagebox.askyesno(title='MeetingGenie', message=t('transcription_canceled')):
                     self.logn()
                     self.logn(t('start_canceling'))
                     self.update()
@@ -2357,7 +2424,7 @@ class App(ctk.CTk):
                         self._mp_queue = None
             else:
                 # Finished, canceling or error -> remove from list after confirmation
-                if tk.messagebox.askyesno(title='noScribe', message=t('queue_remove_entry')):
+                if tk.messagebox.askyesno(title='MeetingGenie', message=t('queue_remove_entry')):
                     try:
                         self.queue.jobs.remove(job)
                     except ValueError:
@@ -2412,7 +2479,7 @@ class App(ctk.CTk):
                 except Exception:
                     pass
                 try:
-                    tk.messagebox.showerror(title='noScribe', message=t('err_partial_not_found'))
+                    tk.messagebox.showerror(title='MeetingGenie', message=t('err_partial_not_found'))
                 except Exception:
                     pass
                 return
@@ -2423,6 +2490,62 @@ class App(ctk.CTk):
             self.openLink(f'file://{path}')
         except Exception:
             pass
+
+    def on_summarize_log(self):
+        try:
+            api_key = self.entry_anthropic_key.get().strip()
+            if not api_key:
+                tk.messagebox.showerror(title='MeetingGenie', message='Por favor, añade tu Anthropic API Key en el panel de Opciones de la izquierda.')
+                return
+            
+            # Decide where to get text
+            text_to_summarize = ""
+            if self.live_output_textbox.winfo_ismapped():
+                text_to_summarize = self.live_output_textbox.get("1.0", tk.END).strip()
+            
+            if len(text_to_summarize) < 10:
+                # Try from a finished job
+                jobs = self.queue.get_finished_jobs()
+                if len(jobs) > 0:
+                    file = jobs[-1].transcript_file
+                    ext = os.path.splitext(file)[1][1:].lower()
+                    if ext == 'txt':
+                        with open(file, 'r', encoding='utf-8') as f:
+                            text_to_summarize = f.read()
+                    else:
+                        tk.messagebox.showerror(title='MeetingGenie', message='Por favor escoge un resultado .txt para resumir (no html/srt).')
+                        return
+            
+            if len(text_to_summarize) < 10:
+                tk.messagebox.showerror(title='MeetingGenie', message='No hay texto suficiente para resumir.')
+                return
+                
+            self.logn("Conectando con Anthropic Claude 3.5 Sonnet para resumir...")
+            self.update()
+            
+            import threading
+            def _thread_summarize():
+                import anthropic_summarizer
+                summary = anthropic_summarizer.generate_meeting_summary(api_key, text_to_summarize)
+                self.after(0, lambda: self._show_summary_window(summary))
+                
+            threading.Thread(target=_thread_summarize, daemon=True).start()
+            
+        except Exception as e:
+            tk.messagebox.showerror(title='MeetingGenie Error', message=str(e))
+
+    def _show_summary_window(self, summary_text):
+        self.logn("Resumen generado exitosamente.")
+        top = ctk.CTkToplevel(self)
+        top.title("MeetingGenie - IA Summary")
+        top.geometry("800x600")
+        
+        textbox = ctk.CTkTextbox(top, wrap='word', font=("", 14))
+        textbox.pack(padx=20, pady=20, fill='both', expand=True)
+        textbox.insert("1.0", summary_text)
+        
+        btn_copy = ctk.CTkButton(top, text="Copiar al Portapapeles", command=lambda: self.clipboard_clear() or self.clipboard_append(summary_text))
+        btn_copy.pack(pady=10)
 
     def launch_editor(self, file=''):
         # Launch the editor in a separate process so that in can stay running even if noScribe quits.
@@ -2437,14 +2560,14 @@ class App(ctk.CTk):
             
         if file == '':
             # no file or finished job to open
-            if not tk.messagebox.askyesno(title='noScribe', message=t('err_editor_no_file')):
+            if not tk.messagebox.askyesno(title='MeetingGenie', message=t('err_editor_no_file')):
                 return
 
         ext = os.path.splitext(file)[1][1:]
         if file != '' and ext != 'html' and ext != 'srt':
             # wrong format
             file = ''
-            if not tk.messagebox.askyesno(title='noScribe', message=t('err_editor_invalid_format')):
+            if not tk.messagebox.askyesno(title='MeetingGenie', message=t('err_editor_invalid_format')):
                 return
 
         program: str = None
@@ -2549,7 +2672,7 @@ class App(ctk.CTk):
     def create_default_transcript_names(self, dir=None):
         self.transcript_files_list = []
         if 'default_filetype' not in config:
-            config['default_filetype'] = 'html'
+            config['default_filetype'] = config.get('last_filetype', 'html')
 
         # Collect audio file names.
         for f in self.audio_files_list:
@@ -2596,7 +2719,7 @@ class App(ctk.CTk):
     def button_transcript_file_event(self):
         if len(self.audio_files_list) == 0:
             # select audio first
-            tk.messagebox.showerror(title='noScribe', message=t('err_no_audio_file'))
+            tk.messagebox.showerror(title='MeetingGenie', message=t('err_no_audio_file'))
             return                    
         if len(self.transcript_files_list) > 0:
             _initialdir = os.path.dirname(self.transcript_files_list[0])
@@ -2619,7 +2742,7 @@ class App(ctk.CTk):
         
         if len(self.audio_files_list) > 1:
             # multiple audio files, select an output directory
-            tk.messagebox.showinfo(title='noScribe', message=t('output_dir_selection'))
+            tk.messagebox.showinfo(title='MeetingGenie', message=t('output_dir_selection'))
             dir = tk.filedialog.askdirectory(title="noScribe", initialdir=_initialdir)
             if dir:
                 self.create_default_transcript_names(dir)
@@ -2633,11 +2756,12 @@ class App(ctk.CTk):
             if fn:
                 file_ext = os.path.splitext(fn)[1][1:].lower()
                 if not file_ext in ['html', 'txt', 'srt', 'vtt']:
-                    tk.messagebox.showerror(title='noScribe', message=t('err_unsupported_output_format', file_type=file_ext))
+                    tk.messagebox.showerror(title='MeetingGenie', message=t('err_unsupported_output_format', file_type=file_ext))
                     return                    
                 self.transcript_files_list = [fn]
                 self.button_transcript_file_name.configure(text=os.path.basename(fn))
                 config['last_filetype'] = file_ext
+                save_config()
             else:
                 return
         
@@ -2703,7 +2827,7 @@ class App(ctk.CTk):
         """Collect all transcription options from UI and config and creates a 
         TranscriptionQueue for each audio file"""
         # Validate required inputs - bypass if Live Mode
-        if hasattr(self, "live_mode_switch_var") and self.live_mode_switch_var.get():
+        if getattr(self, "live_process_running", False):
              return TranscriptionQueue()
 
         if len(self.audio_files_list) == 0:
@@ -2723,10 +2847,23 @@ class App(ctk.CTk):
         if val != '':
             stop_time = utils.str_to_ms(val)
         
-        # Get whisper model path
+        # Get whisper model path – download on demand if not present
+        import model_manager
         sel_whisper_model = self.option_menu_whisper_model.get()
+        if sel_whisper_model in ('fast', 'precise') and not model_manager.model_is_ready(sel_whisper_model):
+            proxy_url, ignore_ssl = model_manager.get_proxy_from_config(config)
+            self.logn(f"Downloading '{sel_whisper_model}' model ({model_manager.MODELS[sel_whisper_model]['size_mb']} MB)...", 'info')
+            try:
+                model_manager.download_model(sel_whisper_model, proxy_url=proxy_url, ignore_ssl=ignore_ssl)
+                self.get_whisper_models()  # refresh paths after download
+            except Exception as dl_err:
+                raise RuntimeError(
+                    f"Could not download model '{sel_whisper_model}'.\n"
+                    f"If you are behind a corporate proxy, set 'proxy_url' and/or 'ignore_ssl: true' in config.yml.\n"
+                    f"Error: {dl_err}"
+                )
         if sel_whisper_model not in self.whisper_model_paths.keys():
-            raise FileNotFoundError(f"The whisper model '{sel_whisper_model}' does not exist.")
+            raise FileNotFoundError(f"The whisper model '{sel_whisper_model}' is not available.")
         whisper_model_path = self.whisper_model_paths[sel_whisper_model]
         
         queue = TranscriptionQueue()
@@ -2939,10 +3076,14 @@ class App(ctk.CTk):
                         ffmpeg_path = os.path.join(app_dir, 'ffmpeg.exe')
                         ffmpeg_cmd = ffmpeg_path + arguments
                     elif platform.system() == "Darwin":  # = MAC
-                        ffmpeg_path = os.path.join(app_dir, 'ffmpeg')
+                        # Prefer native arm64 binary on Apple Silicon to avoid Rosetta2
+                        ffmpeg_arm64 = os.path.join(app_dir, 'ffmpeg-arm64')
+                        if platform.machine() == "arm64" and os.path.exists(ffmpeg_arm64):
+                            ffmpeg_path = ffmpeg_arm64
+                        else:
+                            ffmpeg_path = os.path.join(app_dir, 'ffmpeg')
                         ffmpeg_cmd = shlex.split(ffmpeg_path + arguments)
                     elif platform.system() == "Linux":
-                        # TODO: Use system ffmpeg if available
                         ffmpeg_path = os.path.join(app_dir, 'ffmpeg-linux-x86_64')
                         ffmpeg_cmd = shlex.split(ffmpeg_path + arguments)
                     else:
@@ -3142,19 +3283,21 @@ class App(ctk.CTk):
                                     except Exception:
                                         pass
                                         
-                                # Find longest segment to use as audio sample
-                                best_seg = max(segs, key=lambda s: s["end"] - s["start"])
-                                
-                                speakers_data.append({
-                                    'label': lbl,
-                                    'short_label': short,
-                                    'matched_name': matched_name,
-                                    'similarity': sim,
-                                    'embedding': emb,
-                                    'audio_path': tmp_audio_file,
-                                    'sample_start': best_seg["start"],
-                                    'sample_end': best_seg["end"],
-                                })
+                                    # Find up to 2 longest segments to use as audio samples
+                                    # Sort segments by duration descending
+                                    sorted_segs = sorted(segs, key=lambda s: s["end"] - s["start"], reverse=True)
+                                    best_segs = sorted_segs[:2]
+                                    samples = [{"start": s["start"], "end": s["end"]} for s in best_segs]
+                                    
+                                    speakers_data.append({
+                                        'label': lbl,
+                                        'short_label': short,
+                                        'matched_name': matched_name,
+                                        'similarity': sim,
+                                        'embedding': emb,
+                                        'audio_path': tmp_audio_file,
+                                        'samples': samples
+                                    })
 
                             # Show the dialog in the main GUI thread and wait
                             import threading as _threading
@@ -3292,6 +3435,8 @@ class App(ctk.CTk):
                             last_auto_save = datetime.datetime.now()
 
                     # Prepare VAD data locally for pause adjustment (audio is 16kHz mono after ffmpeg conversion)
+                    from faster_whisper.audio import decode_audio
+                    from faster_whisper.vad import VadOptions, get_speech_timestamps
                     try:
                         job.vad_threshold = float(config['voice_activity_detection_threshold'])
                     except Exception:
@@ -3537,18 +3682,8 @@ class App(ctk.CTk):
             self.set_progress(0, 0)
     def create_job(self, enqueue=False):
         try:
-            # Bypass file list requirements if we are in Live Mode
-            if hasattr(self, "live_mode_switch_var") and self.live_mode_switch_var.get():
-                if getattr(self, "live_process_running", False):
-                    if hasattr(self, "live_queue"):
-                        self.live_queue.put({"action": "stop"})
-                    self.start_button.configure(text=t('bt_start_processing'))
-                else:
-                    self._start_live_transcription()
-                    try:
-                        self.start_button.configure(text="Stop Live")
-                    except Exception:
-                        pass
+            # Skip if we are running live mode
+            if getattr(self, "live_process_running", False):
                 return
                 
             show_queue_tab = enqueue
@@ -3586,11 +3721,11 @@ class App(ctk.CTk):
         except (ValueError, FileNotFoundError) as e:
             # Handle validation errors from collect_transcription_options
             self.logn(str(e), 'error')
-            tk.messagebox.showerror(title='noScribe', message=str(e))
+            tk.messagebox.showerror(title='MeetingGenie', message=str(e))
         except Exception as e:
             # Handle unexpected errors
             self.logn(f'Error starting transcription: {str(e)}', 'error')
-            tk.messagebox.showerror(title='noScribe', message=f'Error starting transcription: {str(e)}')
+            tk.messagebox.showerror(title='MeetingGenie', message=f'Error starting transcription: {str(e)}')
 
     def _handle_cuda_fallback(self, component: str, error: Exception) -> bool:
         global force_pyannote_cpu
@@ -3603,7 +3738,7 @@ class App(ctk.CTk):
             if force_pyannote_cpu:
                 return False
             prompt = t('pyannote_cuda_error_prompt', error=message)
-            if tk.messagebox.askyesno(title='noScribe', message=prompt):
+            if tk.messagebox.askyesno(title='MeetingGenie', message=prompt):
                 force_pyannote_cpu = True
                 config['force_pyannote_cpu'] = 'true'
                 save_config()
@@ -3614,7 +3749,7 @@ class App(ctk.CTk):
             if force_whisper_cpu:
                 return False
             prompt = t('whisper_cuda_error_prompt', error=message)
-            if tk.messagebox.askyesno(title='noScribe', message=prompt):
+            if tk.messagebox.askyesno(title='MeetingGenie', message=prompt):
                 force_whisper_cpu = True
                 config['force_whisper_cpu'] = 'true'
                 save_config()
@@ -3767,6 +3902,7 @@ class App(ctk.CTk):
         embeddings, or an empty dict when extraction was not possible.
         Streams child logs/progress back to GUI and honors cancel.
         """
+        _patch_torchaudio()  # lazy torchaudio patch before spawning worker
         global force_pyannote_cpu
         ctx = mp.get_context("spawn")
         q = ctx.Queue()
@@ -3941,6 +4077,10 @@ class App(ctk.CTk):
             config['last_disfluencies'] = self.check_box_disfluencies.get()
             config['force_pyannote_cpu'] = str(force_pyannote_cpu)
             config['force_whisper_cpu'] = str(force_whisper_cpu)
+            try:
+                config['anthropic_api_key'] = self.entry_anthropic_key.get()
+            except AttributeError:
+                pass
 
             save_config()
         finally:

@@ -1,6 +1,6 @@
 pt:
   app_header: Transcrição de Áudio com IA
-  welcome_message: Olá, o noScribe está pronto!
+  welcome_message: Olá, o MeetingGenie está pronto!
   welcome_credits: >
     
     Versão %{v}, Kai Dröge %{y}
@@ -19,7 +19,7 @@ pt:
     Aproveite!
 
   setup_message: 'Primeira execução: Complete a configuração...'
-  new_release: 'Uma nova versão do noScribe está disponível (%{v}):'
+  new_release: 'Uma nova versão do MeetingGenie está disponível (%{v}):'
   new_release_download: 'Download: '
 
   # Elementos da interface
@@ -134,7 +134,7 @@ pt:
     %{error}
 
     Alternar para processamento na CPU e tentar novamente?
-  err_noScribeEdit_not_found: 'Erro: não foi possível encontrar o editor do noScribe.'
+  err_MeetingGenieEdit_not_found: 'Erro: não foi possível encontrar o editor do MeetingGenie.'
   err_vtt_invalid_options: 'Aviso: as opções "Sobreposição", "Marcar pausas" e "Registos temporais" não são suportadas em arquivos VTT.'
   err_editor_invalid_format: 'O editor só pode ser usado com arquivos HTML. Deseja iniciá-lo mesmo assim?'
   err_editor_no_file: 'Nenhuma tarefa de transcrição concluída disponível. Iniciar o editor mesmo assim?'
@@ -143,7 +143,7 @@ pt:
   log_open_partial: 'Abrindo transcrição parcial: %{file}'
 
   # Conteúdo do documento
-  doc_header: 'Transcrito com noScribe versão %{version}'
+  doc_header: 'Transcrito com MeetingGenie versão %{version}'
   doc_header_audio: 'Arquivo de áudio: %{file}'
   pause_minutes: '(%{minutes} minuto[s] pausa)'
   pause_seconds: '(%{seconds} segundos de pausa)'
@@ -155,8 +155,8 @@ pt:
   queue_tt_remove_waiting: 'Remover da fila'
   queue_tt_remove_entry: 'Remover da lista'
   queue_tt_repeat_job: 'Repetir esta tarefa'
-  queue_tt_edit_job: 'Abrir o resultado no editor noScribe'
-  queue_tt_open_partial_job: 'Abrir resultado parcial no editor noScribe'
+  queue_tt_edit_job: 'Abrir o resultado no editor MeetingGenie'
+  queue_tt_open_partial_job: 'Abrir resultado parcial no editor MeetingGenie'
 
   # Botões adicionais da UI
   send_queue: 'Enviar tarefa para a fila'
@@ -166,7 +166,7 @@ pt:
   speaker_naming_title: 'Reconhecimento de falantes'
   speaker_naming_hint: >
     Insira nomes para os falantes detectados. Os falantes marcados terão a sua voz
-    guardada para que noScribe os reconheça automaticamente em gravações futuras.
+    guardada para que MeetingGenie os reconheça automaticamente em gravações futuras.
   speaker_name_placeholder: 'Inserir nome...'
   speaker_new_badge: 'Novo'
   speaker_save_checkbox: 'Guardar'

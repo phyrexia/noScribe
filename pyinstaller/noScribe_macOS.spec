@@ -1,6 +1,7 @@
 # -*- mode: python ; coding: utf-8 -*-
 
 ############################################
+# MeetingGenie – macOS build spec
 # Run from /noScribe/pyinstaller subdir!
 ############################################
 
@@ -12,12 +13,12 @@ from PyInstaller.utils.hooks import copy_metadata
 
 block_cipher = None
 
-# noScribe (macOS, integrated pyannote)
+# Models are NOT bundled – they are downloaded on first use.
+# Only the pyannote embedding/segmentation models ship with the app (small, ~200 MB).
 
 noScribe_datas = [
-    ('../models/precise/', './models/precise/'),
-    ('../models/fast/', './models/fast/'),
-    # ('../noScribeEdit/', './noScribeEdit/'),
+    # ('../models/precise/', './models/precise/'),  # on-demand download
+    # ('../models/fast/', './models/fast/'),         # on-demand download
     ('../trans/', './trans/'),
     ('../graphic_sw.png', '.'),
     ('../LICENSE.txt', '.'),
@@ -33,7 +34,6 @@ noScribe_datas += collect_data_files('faster_whisper')
 # pyannote integration
 noScribe_datas += [('../pyannote/', './pyannote/')]
 noScribe_datas += collect_data_files('lightning')
-noScribe_datas += collect_data_files('gradio')
 noScribe_datas += collect_data_files('lightning_fabric')
 noScribe_datas += collect_data_files('librosa')
 noScribe_datas += collect_data_files('pyannote')
@@ -51,7 +51,12 @@ noScribe_datas += copy_metadata('pyannote.database')
 noScribe_datas += copy_metadata('pyannote.metrics')
 noScribe_datas += copy_metadata('pyannote.pipeline')
 
+import os as _os
+_spec_dir = _os.path.dirname(_os.path.abspath(SPEC))
+_ffmpeg_arm64 = _os.path.join(_os.path.dirname(_spec_dir), 'ffmpeg-arm64')
 noScribe_binaries = [('../ffmpeg', '.')]
+if _os.path.exists(_ffmpeg_arm64):
+    noScribe_binaries += [('../ffmpeg-arm64', '.')]
 noScribe_binaries += collect_dynamic_libs('pyannote')
 
 noScribe_hiddenimports = ['tkinter']
@@ -73,7 +78,13 @@ noScribe_a = Analysis(
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
-    excludes=[],
+    # Exclude heavyweight packages that are not needed at runtime:
+    # - gradio: web UI framework pulled as transitive dep, never used
+    # - triton: GPU compiler, not needed on macOS
+    # - IPython / jupyter: dev tools
+    # - matplotlib: plotting, not used in the UI
+    # - pandas: data analysis, not used
+    excludes=['gradio', 'triton', 'IPython', 'jupyter', 'matplotlib', 'pandas', 'PIL.ImageQt'],
     win_no_prefer_redirects=False,
     win_private_assemblies=False,
     cipher=block_cipher,
@@ -87,7 +98,7 @@ noScribe_exe = EXE(
     noScribe_a.scripts,
     [],
     exclude_binaries=True,
-    name='noScribe',
+    name='MeetingGenie',
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
@@ -95,7 +106,7 @@ noScribe_exe = EXE(
     console=False,
     disable_windowed_traceback=False,
     argv_emulation=False,
-    target_arch=None,
+    target_arch='arm64',  # Apple Silicon native
     codesign_identity=None,
     entitlements_file=None,
     icon=['../noScribeLogo.ico'],
@@ -109,14 +120,21 @@ coll = COLLECT(
     strip=False,
     upx=True,
     upx_exclude=[],
-    name='noScribe',
+    name='MeetingGenie',
 )
 
 app = BUNDLE(
     coll,
-    name='noScribe.app',
+    name='MeetingGenie.app',
     icon='../noScribeLogo.ico',
-    bundle_identifier=None,
-    info_plist={"CFBundleShortVersionString":"0.7"},
+    bundle_identifier='com.meetinggenie.app',
+    info_plist={
+        "CFBundleShortVersionString": "1.0",
+        "CFBundleName": "MeetingGenie",
+        "CFBundleDisplayName": "MeetingGenie",
+        "NSMicrophoneUsageDescription": "MeetingGenie needs microphone access for live meeting transcription.",
+        "NSAppleEventsUsageDescription": "MeetingGenie uses Apple Events for system integration.",
+        "LSMinimumSystemVersion": "14.0",
+    },
 )
 
