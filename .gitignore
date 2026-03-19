@@ -6,7 +6,7 @@ __pycache__/
 .vscode/
 noScribeEdit/*
 !noScribeEdit/readme.txt
-scripts/
+# scripts/ tracked in MeetingGenie branch
 
 *.code-workspace
 auto-py-to-exe*.*

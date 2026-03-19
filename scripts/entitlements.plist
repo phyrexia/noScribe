@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <!-- Allow JIT compilation needed by Python/ctypes and ML runtimes -->
+  <key>com.apple.security.cs.allow-jit</key>
+  <true/>
+
+  <!-- Allow unsigned code pages (needed by some Python extensions) -->
+  <key>com.apple.security.cs.allow-unsigned-executable-memory</key>
+  <true/>
+
+  <!-- Disable library validation so bundled .dylibs are accepted -->
+  <key>com.apple.security.cs.disable-library-validation</key>
+  <true/>
+
+  <!-- Microphone access for Live Mode recording -->
+  <key>com.apple.security.device.audio-input</key>
+  <true/>
+
+  <!-- File access: read user-selected files (audio/video) -->
+  <key>com.apple.security.files.user-selected.read-only</key>
+  <true/>
+
+  <!-- File access: read-write to user-selected output locations -->
+  <key>com.apple.security.files.user-selected.read-write</key>
+  <true/>
+</dict>
+</plist>

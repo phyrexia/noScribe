@@ -1838,8 +1838,148 @@ class App(ctk.CTk):
                     self.logn()
             except:
                 pass
-            
+
+        # macOS native menu bar
+        if platform.system() == "Darwin":
+            self._setup_macos_menu()
+
     # Events and Methods
+
+    def on_queue_run(self):
+        """Start processing pending jobs in the queue (called by Run button and menu)."""
+        if self.queue.is_running():
+            return
+        pending = self.queue.get_waiting_jobs()
+        if not pending:
+            return
+        try:
+            start_idx = self.queue.jobs.index(pending[0])
+        except ValueError:
+            start_idx = None
+        wkr = Thread(target=self.transcription_worker, kwargs={"start_job_index": start_idx}, daemon=True)
+        self._worker_threads.append(wkr)
+        wkr.start()
+
+    def _setup_macos_menu(self):
+        """Build a proper macOS-native menu bar via the Tk/Cocoa bridge."""
+        menubar = tk.Menu(self)
+        self.configure(menu=menubar)
+
+        # ── Apple / App menu (Tk names it after the bundle automatically) ──
+        app_menu = tk.Menu(menubar, name='apple', tearoff=False)
+        menubar.add_cascade(menu=app_menu)
+        app_menu.add_command(label='About MeetingGenie', command=self._macos_about)
+        app_menu.add_separator()
+        app_menu.add_command(
+            label='Preferences…',
+            accelerator='Command+,',
+            command=self._macos_open_prefs,
+        )
+
+        # ── File ──────────────────────────────────────────────────────────
+        file_menu = tk.Menu(menubar, tearoff=False)
+        menubar.add_cascade(label='File', menu=file_menu)
+        file_menu.add_command(
+            label='Open Audio File…',
+            accelerator='Command+O',
+            command=self.button_audio_file_event,
+        )
+        file_menu.add_command(
+            label='Set Transcript File…',
+            accelerator='Command+Shift+O',
+            command=self.button_transcript_file_event,
+        )
+        file_menu.add_separator()
+        file_menu.add_command(
+            label='Show Models Folder in Finder',
+            command=lambda: subprocess.Popen(['open', self.user_models_dir]),
+        )
+        file_menu.add_command(
+            label='Show Config Folder in Finder',
+            command=lambda: subprocess.Popen(['open', config_dir]),
+        )
+
+        # ── Transcription ─────────────────────────────────────────────────
+        trans_menu = tk.Menu(menubar, tearoff=False)
+        menubar.add_cascade(label='Transcription', menu=trans_menu)
+        trans_menu.add_command(
+            label='Transcribe Now',
+            accelerator='Command+R',
+            command=lambda: self.create_job(enqueue=False),
+        )
+        trans_menu.add_command(
+            label='Add to Queue',
+            accelerator='Command+Shift+R',
+            command=lambda: self.create_job(enqueue=True),
+        )
+        trans_menu.add_command(
+            label='Run Queue',
+            accelerator='Command+Return',
+            command=self.on_queue_run,
+        )
+        trans_menu.add_command(
+            label='Stop',
+            accelerator='Command+.',
+            command=self.on_queue_stop,
+        )
+        trans_menu.add_separator()
+        trans_menu.add_command(
+            label='Start / Stop Live Mode',
+            command=self._click_live_mode_header,
+        )
+
+        # ── Tools ─────────────────────────────────────────────────────────
+        tools_menu = tk.Menu(menubar, tearoff=False)
+        menubar.add_cascade(label='Tools', menu=tools_menu)
+        tools_menu.add_command(
+            label='Open Transcript Editor',
+            accelerator='Command+E',
+            command=lambda: self.launch_editor(),
+        )
+        tools_menu.add_command(
+            label='Summarize with AI',
+            command=self.on_summarize_log,
+        )
+
+        # ── Window (named 'window' → Tk wires Minimize, Zoom etc.) ────────
+        win_menu = tk.Menu(menubar, name='window', tearoff=False)
+        menubar.add_cascade(label='Window', menu=win_menu)
+
+        # ── Help (named 'help' → Tk wires macOS Spotlight search box) ─────
+        help_menu = tk.Menu(menubar, name='help', tearoff=False)
+        menubar.add_cascade(label='Help', menu=help_menu)
+        help_menu.add_command(
+            label='MeetingGenie on GitHub',
+            command=lambda: self.openLink('https://github.com/kaixxx/noScribe#readme'),
+        )
+
+        # Bind keyboard shortcuts (menu accelerator labels are cosmetic only in Tk)
+        self.bind_all('<Command-o>', lambda e: self.button_audio_file_event())
+        self.bind_all('<Command-O>', lambda e: self.button_transcript_file_event())
+        self.bind_all('<Command-r>', lambda e: self.create_job(enqueue=False))
+        self.bind_all('<Command-R>', lambda e: self.create_job(enqueue=True))
+        self.bind_all('<Command-e>', lambda e: self.launch_editor())
+        self.bind_all('<Command-Return>', lambda e: self.on_queue_run())
+        self.bind_all('<Command-period>', lambda e: self.on_queue_stop())
+        self.bind_all('<Command-comma>', lambda e: self._macos_open_prefs())
+
+    def _macos_about(self):
+        tk.messagebox.showinfo(
+            title='MeetingGenie',
+            message=(
+                f'MeetingGenie {app_version}\n\n'
+                'AI-powered meeting transcription.\n'
+                'Fully offline — no data leaves your Mac.\n\n'
+                f'Based on noScribe by Kai Dröge.  © {app_year}'
+            ),
+        )
+
+    def _macos_open_prefs(self):
+        cfg_path = os.path.join(config_dir, 'config.yml')
+        if not os.path.exists(cfg_path):
+            tk.messagebox.showinfo(title='MeetingGenie', message=f'Config file not found:\n{cfg_path}')
+            return
+        subprocess.Popen(['open', cfg_path])
 
     def get_whisper_models(self):
         import model_manager
