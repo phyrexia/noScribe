@@ -49,18 +49,21 @@ command -v pyinstaller >/dev/null 2>&1 || die "pyinstaller not found – activat
 if [[ ! -f "$FFMPEG_ARM64" ]]; then
   log "Downloading ffmpeg arm64..."
   TMP_ZIP=$(mktemp /tmp/ffmpeg-arm64-XXXX.zip)
-  curl -fsSL "$FFMPEG_ARM64_URL" -o "$TMP_ZIP" || {
+  TMP_DIR=$(mktemp -d /tmp/ffmpeg-arm64-XXXX)
+  if curl -fsSL "$FFMPEG_ARM64_URL" -o "$TMP_ZIP"; then
+    unzip -o "$TMP_ZIP" -d "$TMP_DIR" >/dev/null 2>&1 || true
+    FFMPEG_BIN=$(find "$TMP_DIR" -name "ffmpeg" -type f | head -1)
+    if [[ -n "$FFMPEG_BIN" ]]; then
+      cp "$FFMPEG_BIN" "$FFMPEG_ARM64"
+      chmod +x "$FFMPEG_ARM64"
+      log "ffmpeg-arm64 saved to $FFMPEG_ARM64"
+    else
+      log "WARNING: ffmpeg binary not found in zip – will use x86_64 ffmpeg (Rosetta2)"
+    fi
+  else
     log "WARNING: could not download ffmpeg-arm64 – will use x86_64 ffmpeg (Rosetta2)"
-    rm -f "$TMP_ZIP"
-  }
-  if [[ -f "$TMP_ZIP" ]]; then
-    unzip -p "$TMP_ZIP" ffmpeg > "$FFMPEG_ARM64" 2>/dev/null || \
-      unzip -o "$TMP_ZIP" -d /tmp/ffmpeg-arm64-extract && \
-      cp /tmp/ffmpeg-arm64-extract/ffmpeg "$FFMPEG_ARM64"
-    chmod +x "$FFMPEG_ARM64"
-    rm -f "$TMP_ZIP"
-    log "ffmpeg-arm64 saved to $FFMPEG_ARM64"
   fi
+  rm -rf "$TMP_DIR" "$TMP_ZIP"
 fi
 
 # ── Clean previous build ──────────────────────────────────────────────────────
