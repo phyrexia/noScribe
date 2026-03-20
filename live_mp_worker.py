@@ -2,25 +2,12 @@ import gc
 import os
 import sys
 
-# Disable HuggingFace Hub symlink warnings (cosmetic only)
+# Cosmetic: suppress symlink warnings from huggingface_hub
 os.environ["HF_HUB_DISABLE_SYMLINKS_WARNING"] = "1"
-
-# SSL bypass scoped only to local pyannote/HuggingFace Hub calls.
-# We patch only huggingface_hub's session, not the entire process.
-try:
-    import huggingface_hub.file_download as _hf_fd
-    _orig_hf_get = getattr(_hf_fd, "_request_wrapper", None)
-except Exception:
-    pass
-
-# Monkeypatch httpx only for HuggingFace Hub (not globally)
-try:
-    import huggingface_hub._commit_api as _hf_commit
-except Exception:
-    pass
-
-# Allow local-only model loading without network SSL errors
 os.environ["HUGGINGFACE_HUB_VERBOSITY"] = "error"
+
+# NOTE: SSL and offline mode are configured inside live_proc_entrypoint()
+# *before* any ML imports, using values passed via the args dict.
 
 import time
 import queue
@@ -38,6 +25,27 @@ def live_proc_entrypoint(args: dict, q: queue.Queue, stop_event=None):
                 pass
 
         plog("info", "Initializing Live Worker and loading ML libraries... This may take several seconds.")
+
+        # ── SSL / proxy / offline configuration ──────────────────────────────
+        # Must be applied BEFORE any ML library import (torch, faster_whisper,
+        # pyannote, huggingface_hub all read these env vars at import time).
+        #
+        # HF_HUB_OFFLINE=1 + TRANSFORMERS_OFFLINE=1 tell HuggingFace/Transformers
+        # to never attempt a network check — models are already local.
+        os.environ["HF_HUB_OFFLINE"] = "1"
+        os.environ["TRANSFORMERS_OFFLINE"] = "1"
+
+        if args.get("ignore_ssl"):
+            # Corporate MITM proxies intercept TLS; bypass certificate validation
+            # only for this worker process (does not affect the main UI process).
+            os.environ["CURL_CA_BUNDLE"] = ""
+            os.environ["REQUESTS_CA_BUNDLE"] = ""
+            os.environ["SSL_CERT_FILE"] = ""
+
+        if args.get("proxy_url"):
+            os.environ["HTTPS_PROXY"] = args["proxy_url"]
+            os.environ["HTTP_PROXY"] = args["proxy_url"]
+        # ─────────────────────────────────────────────────────────────────────
 
         import numpy as np
         import sounddevice as sd
@@ -99,14 +107,13 @@ def live_proc_entrypoint(args: dict, q: queue.Queue, stop_event=None):
 
         plog("info", f"Loading Pyannote Embedding model for Live Diarization...")
         try:
-            # Load the embbedding model
-            embedding_model = PyannoteModel.from_pretrained(
-                "pyannote/embedding", use_auth_token="HF_TOKEN_NOT_NEEDED_FOR_LOCAL" # We use local
-            )
-            # if we have it locally in pyannote dir
+            # Always load from the bundled local path — never contact HuggingFace Hub.
+            # HF_HUB_OFFLINE=1 is already set above, but loading from the explicit
+            # local path is more robust and faster (no cache lookup overhead).
             pyannote_dir = os.path.join(os.path.dirname(__file__), 'pyannote', 'embedding')
-            if os.path.exists(os.path.join(pyannote_dir, "pytorch_model.bin")):
-                embedding_model = PyannoteModel.from_pretrained(pyannote_dir)
+            embedding_model = PyannoteModel.from_pretrained(
+                pyannote_dir, local_files_only=True
+            )
             embedding_model.eval()
             
             torch_device = device

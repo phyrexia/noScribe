@@ -2419,9 +2419,10 @@ class App(ctk.CTk):
         self.live_stop_event = mp.Event()
         
         import model_manager
+        proxy_url, ignore_ssl = model_manager.get_proxy_from_config(config)
+
         model_name = self.option_menu_whisper_model.get()
         if model_name in ('fast', 'precise') and not model_manager.model_is_ready(model_name):
-            proxy_url, ignore_ssl = model_manager.get_proxy_from_config(config)
             self.logn(f"Downloading '{model_name}' model for live transcription...", 'info')
             try:
                 model_manager.download_model(model_name, proxy_url=proxy_url, ignore_ssl=ignore_ssl)
@@ -2430,7 +2431,19 @@ class App(ctk.CTk):
                 self.logn(f"Model download failed: {dl_err}\nCheck proxy_url / ignore_ssl in config.yml.", 'error')
                 return
         model_path = self.whisper_model_paths.get(model_name, model_name)
-        
+
+        # Apply SSL/proxy env vars in the parent process so they are inherited
+        # by the child process even before live_proc_entrypoint() executes.
+        os.environ["HF_HUB_OFFLINE"] = "1"
+        os.environ["TRANSFORMERS_OFFLINE"] = "1"
+        if ignore_ssl:
+            os.environ["CURL_CA_BUNDLE"] = ""
+            os.environ["REQUESTS_CA_BUNDLE"] = ""
+            os.environ["SSL_CERT_FILE"] = ""
+        if proxy_url:
+            os.environ["HTTPS_PROXY"] = proxy_url
+            os.environ["HTTP_PROXY"] = proxy_url
+
         language_name = self.option_menu_language.get()
         language_code = None
         # Handle 'Auto', 'Multilingual' and proper languages
@@ -2439,16 +2452,24 @@ class App(ctk.CTk):
                 language_code = languages[language_name]
             except Exception:
                 pass
-                
+
+        try:
+            cpu_threads = int(config.get("cpu_threads", os.cpu_count() or 4))
+        except (ValueError, TypeError):
+            cpu_threads = 4
+
         args = {
             "locale": getattr(self, "current_locale", "en"),
             "device": "auto" if platform.system() == "Darwin" else "cpu",
             "compute_type": config.get("whisper_compute_type", "int8"),
             "model_name_or_path": model_path,
-            "input_device_id": self.input_device_optionemenu.get(), 
+            "input_device_id": self.input_device_optionemenu.get(),
             "language_code": language_code,
             "language_name": language_name,
             "vad_threshold": config.get("vad_threshold", 0.5),
+            "cpu_threads": cpu_threads,
+            "ignore_ssl": ignore_ssl,
+            "proxy_url": proxy_url,
         }
         
         self.live_process = mp.Process(target=live_proc_entrypoint, args=(args, self.live_queue, self.live_stop_event))
@@ -4047,10 +4068,14 @@ class App(ctk.CTk):
         ctx = mp.get_context("spawn")
         q = ctx.Queue()
         from pyannote_mp_worker import pyannote_proc_entrypoint
+        import model_manager as _mm
+        _proxy_url, _ignore_ssl = _mm.get_proxy_from_config(config)
         args = {
             "device": 'cpu' if force_pyannote_cpu else '',
             "audio_path": tmp_audio_file,
             "num_speakers": (int(job.speaker_detection) if str(job.speaker_detection).isdigit() else None),
+            "ignore_ssl": _ignore_ssl,
+            "proxy_url": _proxy_url,
         }
         proc = ctx.Process(target=pyannote_proc_entrypoint, args=(args, q))
         proc.start()

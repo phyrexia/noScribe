@@ -2,7 +2,15 @@ import os
 import platform
 import traceback
 from dataclasses import asdict, is_dataclass
-import os
+
+# ── Offline / SSL configuration (module-level, applied before any ML import) ──
+# pyannote and huggingface_hub read these env vars during module initialization.
+# Models are always bundled locally so network access is never needed.
+os.environ.setdefault("HF_HUB_OFFLINE", "1")
+os.environ.setdefault("TRANSFORMERS_OFFLINE", "1")
+os.environ["HF_HUB_DISABLE_SYMLINKS_WARNING"] = "1"
+os.environ["HUGGINGFACE_HUB_VERBOSITY"] = "error"
+# ──────────────────────────────────────────────────────────────────────────────
 
 import torchaudio
 from pathlib import Path
@@ -60,6 +68,16 @@ def pyannote_proc_entrypoint(args: dict, q):
                     q.put({"type": "progress", "step": str(step_name), "pct": pct})
                 except Exception:
                     pass
+
+        # Apply SSL/proxy overrides from config (passed by parent process).
+        # These must be set before Pipeline.from_pretrained is called.
+        if args.get("ignore_ssl"):
+            os.environ["CURL_CA_BUNDLE"] = ""
+            os.environ["REQUESTS_CA_BUNDLE"] = ""
+            os.environ["SSL_CERT_FILE"] = ""
+        if args.get("proxy_url"):
+            os.environ["HTTPS_PROXY"] = args["proxy_url"]
+            os.environ["HTTP_PROXY"] = args["proxy_url"]
 
         audio_file = args.get("audio_path")
         num_speakers = args.get("num_speakers")
