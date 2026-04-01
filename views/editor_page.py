@@ -1,0 +1,28 @@
+# MeetingGenie - Editor Page (stub)
+# Full implementation in Phase 4
+
+import flet as ft
+from app_state import AppState
+
+
+def build_editor_page(page: ft.Page, state: AppState) -> ft.Control:
+    return ft.Container(
+        content=ft.Column(
+            [
+                ft.Text("Editor", size=20, weight=ft.FontWeight.BOLD),
+                ft.Text(
+                    "Transcript editor with audio playback will appear here.",
+                    size=14,
+                    italic=True,
+                    color=ft.Colors.ON_SURFACE_VARIANT,
+                ),
+                ft.Divider(height=16, color=ft.Colors.TRANSPARENT),
+                ft.Icon(ft.Icons.EDIT_NOTE, size=64, color=ft.Colors.ON_SURFACE_VARIANT),
+            ],
+            horizontal_alignment=ft.CrossAxisAlignment.CENTER,
+            alignment=ft.MainAxisAlignment.CENTER,
+            expand=True,
+        ),
+        padding=20,
+        expand=True,
+    )
