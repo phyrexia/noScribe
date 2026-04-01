@@ -12,9 +12,10 @@ import urllib.error
 from pathlib import Path
 from typing import Optional, Callable
 
-import appdirs
-
 APP_NAME = 'MeetingGenie'
+
+# Default models directory: ~/.meetinggenie/models/
+_DEFAULT_MODELS_DIR = Path.home() / '.meetinggenie' / 'models'
 
 # ---------------------------------------------------------------------------
 # Model registry
@@ -61,8 +62,8 @@ HF_BASE = "https://huggingface.co/{repo}/resolve/main/{file}"
 
 
 def models_dir() -> Path:
-    """Root directory where models are stored (user data, not inside the .app)."""
-    base = Path(appdirs.user_data_dir(APP_NAME))
+    """Root directory where models are stored (~/.meetinggenie/models/)."""
+    base = _DEFAULT_MODELS_DIR
     base.mkdir(parents=True, exist_ok=True)
     return base
 

@@ -1,8 +1,20 @@
 import gc
 import os
 import platform
+import ssl
 import traceback
 from dataclasses import asdict, is_dataclass
+
+# Offline + SSL bypass for corporate environments
+os.environ.setdefault("HF_HUB_OFFLINE", "1")
+os.environ.setdefault("TRANSFORMERS_OFFLINE", "1")
+os.environ["CURL_CA_BUNDLE"] = ""
+os.environ["REQUESTS_CA_BUNDLE"] = ""
+try:
+    ssl._create_default_https_context = ssl._create_unverified_context
+except Exception:
+    pass
+
 from i18n import t
 
 

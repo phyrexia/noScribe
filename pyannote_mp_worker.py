@@ -1,5 +1,6 @@
 import os
 import platform
+import ssl
 import traceback
 from dataclasses import asdict, is_dataclass
 
@@ -10,6 +11,14 @@ os.environ.setdefault("HF_HUB_OFFLINE", "1")
 os.environ.setdefault("TRANSFORMERS_OFFLINE", "1")
 os.environ["HF_HUB_DISABLE_SYMLINKS_WARNING"] = "1"
 os.environ["HUGGINGFACE_HUB_VERBOSITY"] = "error"
+os.environ["CURL_CA_BUNDLE"] = ""
+os.environ["REQUESTS_CA_BUNDLE"] = ""
+os.environ["SSL_CERT_FILE"] = ""
+# Bypass corporate SSL proxy at module level
+try:
+    ssl._create_default_https_context = ssl._create_unverified_context
+except Exception:
+    pass
 # ──────────────────────────────────────────────────────────────────────────────
 
 import torchaudio

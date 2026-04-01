@@ -40,3 +40,15 @@ diarize_x86_64_mod_unsigned
 .python-version
 /pyinstaller/win_installer
 /.history-memo
+
+# Binary assets (not tracked)
+ffmpeg-arm64
+out.wav
+venv/
+
+# Debug/test files
+debug_live.py
+test_live2.py
+
+# Downloaded models (large binaries)
+models/faster-whisper-*/
