@@ -120,7 +120,7 @@ class SpeakerNamingBridge:
         )
 
         # Use pubsub to trigger dialog open on UI thread
-        self._page.pubsub.send("__show_speaker_dialog__")
+        self._page.pubsub.send_all("__show_speaker_dialog__")
 
         # Block worker thread
         self._done_event.wait(timeout=300)

@@ -33,23 +33,18 @@ mp.freeze_support()
 
 BRAND_BLUE = "#0A84FF"
 
-# --- Background warmup: pre-load ML models while UI renders -----------
-_warmup_proc = None
 
 def _start_warmup():
     """Spawn a background subprocess that imports torch/pyannote/whisper
     to warm the OS page cache. Makes first transcription ~2-3x faster."""
-    global _warmup_proc
     try:
         ctx = mp.get_context("spawn")
         from warmup import warmup
-        _warmup_proc = ctx.Process(target=warmup, daemon=True)
-        _warmup_proc.start()
+        proc = ctx.Process(target=warmup, daemon=True)
+        proc.start()
         print("[main] Warmup subprocess started")
     except Exception as e:
         print(f"[main] Warmup failed to start: {e}")
-
-_start_warmup()
 
 
 def main(page: ft.Page):
@@ -87,4 +82,5 @@ def main(page: ft.Page):
 
 
 if __name__ == "__main__":
+    _start_warmup()
     ft.run(main)
