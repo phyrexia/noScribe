@@ -173,9 +173,17 @@ def build_transcribe_page(page: ft.Page, state: AppState) -> ft.Control:
     def _build_job() -> TranscriptionJob:
         """Create a TranscriptionJob from current UI state."""
         audio = state.audio_files[0]
-        transcript = state.transcript_files[0] if state.transcript_files else (
-            os.path.splitext(audio)[0] + "." + (filetype_dropdown.value or "txt")
-        )
+        ext = filetype_dropdown.value or "txt"
+        # Always use the currently selected format, not what was auto-set
+        if state.transcript_files:
+            base = os.path.splitext(state.transcript_files[0])[0]
+            transcript = f"{base}.{ext}"
+        else:
+            transcript = os.path.splitext(audio)[0] + f".{ext}"
+        # Update display
+        transcript_file_text.value = os.path.basename(transcript)
+        transcript_file_text.italic = False
+        state.transcript_files = [transcript]
         # Ensure model is downloaded
         sel_model = model_dropdown.value or "precise"
         if sel_model in ('fast', 'precise') and not model_manager.model_is_ready(sel_model):

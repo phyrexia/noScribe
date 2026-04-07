@@ -216,7 +216,8 @@ def run_transcription(
         p = ctx.Process(target=_whisper_target, args=(w_args, q))
         p.start()
 
-        segments_text = []
+        # Each segment: {"text": str, "start_ms": int, "end_ms": int, "speaker": str}
+        segments_data = []
         try:
             while True:
                 try:
@@ -251,18 +252,13 @@ def run_transcription(
                             overlapping_enabled=job.overlapping
                         )
 
-                    if speaker:
-                        line = f"{speaker}: {text}"
-                    else:
-                        line = text
-
-                    # Add timestamp if enabled
-                    if job.timestamps:
-                        ts = utils.ms_to_str(job.start + start_ms)
-                        line = f"[{ts}] {line}"
-
-                    segments_text.append(line)
-                    log_fn(text, 'info')
+                    segments_data.append({
+                        "text": text,
+                        "start_ms": job.start + start_ms,
+                        "end_ms": job.start + end_ms,
+                        "speaker": speaker,
+                    })
+                    log_fn(f"{speaker + ': ' if speaker else ''}{text}", 'info')
 
                 elif mtype == "result":
                     if not msg.get("ok"):
@@ -286,29 +282,64 @@ def run_transcription(
         # ── 4. Save output ───────────────────────────────────────────
         log_fn("Saving transcript...", 'highlight')
 
-        output_text = "\n".join(segments_text)
+        def _ms_to_srt_ts(ms):
+            s, ms_r = divmod(ms, 1000)
+            m, s = divmod(s, 60)
+            h, m = divmod(m, 60)
+            return f"{h:02d}:{m:02d}:{s:02d},{ms_r:03d}"
+
+        def _ms_to_vtt_ts(ms):
+            s, ms_r = divmod(ms, 1000)
+            m, s = divmod(s, 60)
+            h, m = divmod(m, 60)
+            return f"{h:02d}:{m:02d}:{s:02d}.{ms_r:03d}"
+
+        def _seg_line(seg, include_ts=False):
+            spk = seg["speaker"]
+            txt = seg["text"]
+            line = f"{spk}: {txt}" if spk else txt
+            if include_ts:
+                ts = utils.ms_to_str(seg["start_ms"])
+                line = f"[{ts}] {line}"
+            return line
 
         ext = job.file_ext or os.path.splitext(job.transcript_file)[1][1:]
-        if ext == 'txt' or ext == '':
-            with open(job.transcript_file, 'w', encoding='utf-8') as f:
-                f.write(output_text)
-        elif ext == 'srt':
-            srt = ""
-            for i, seg in enumerate(segments_text):
-                # Simple SRT: sequential numbering
-                srt += f"{i+1}\n00:00:00,000 --> 00:00:00,000\n{seg}\n\n"
-            with open(job.transcript_file, 'w', encoding='utf-8') as f:
-                f.write(srt)
+
+        if ext == 'srt':
+            out = ""
+            for i, seg in enumerate(segments_data):
+                start = _ms_to_srt_ts(seg["start_ms"])
+                end = _ms_to_srt_ts(seg["end_ms"])
+                spk = seg["speaker"]
+                txt = f"[{spk}] {seg['text']}" if spk else seg["text"]
+                out += f"{i+1}\n{start} --> {end}\n{txt}\n\n"
         elif ext == 'vtt':
-            vtt = "WEBVTT\n\n"
-            for seg in segments_text:
-                vtt += f"{seg}\n\n"
-            with open(job.transcript_file, 'w', encoding='utf-8') as f:
-                f.write(vtt)
+            out = "WEBVTT\n\n"
+            for i, seg in enumerate(segments_data):
+                start = _ms_to_vtt_ts(seg["start_ms"])
+                end = _ms_to_vtt_ts(seg["end_ms"])
+                spk = seg["speaker"]
+                txt = f"<v {spk}>{seg['text']}" if spk else seg["text"]
+                out += f"{i+1}\n{start} --> {end}\n{txt}\n\n"
+        elif ext == 'html':
+            # Simple HTML with speaker names and timestamps
+            lines = [f"<html><body><h2>{Path(job.audio_file).stem}</h2>"]
+            for seg in segments_data:
+                spk = seg["speaker"]
+                ts = utils.ms_to_str(seg["start_ms"])
+                txt = seg["text"]
+                if spk:
+                    lines.append(f"<p><b>{spk}</b> <span style='color:#78909C'>[{ts}]</span> {txt}</p>")
+                else:
+                    lines.append(f"<p><span style='color:#78909C'>[{ts}]</span> {txt}</p>")
+            lines.append("</body></html>")
+            out = "\n".join(lines)
         else:
-            # Default: plain text
-            with open(job.transcript_file, 'w', encoding='utf-8') as f:
-                f.write(output_text)
+            # txt or unknown — plain text
+            out = "\n".join(_seg_line(seg, include_ts=job.timestamps) for seg in segments_data)
+
+        with open(job.transcript_file, 'w', encoding='utf-8') as f:
+            f.write(out)
 
         job.set_finished()
         progress_fn(100)
