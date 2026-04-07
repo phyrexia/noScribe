@@ -258,7 +258,17 @@ def build_settings_page(page: ft.Page, state: AppState) -> ft.Control:
         expand=True,
     )
 
-    # Load speakers on first view
-    _list_speakers()
+    # Pre-populate speaker list (without .update() since not yet on page)
+    try:
+        import speaker_db
+        names = speaker_db.list_speakers()
+        if names:
+            for n in names:
+                info = speaker_db.get_speaker_info(n)
+                speaker_table.controls.append(_build_speaker_row(n, info))
+        else:
+            speaker_table.controls.append(ft.Text("No saved speakers.", italic=True, size=13))
+    except Exception:
+        speaker_table.controls.append(ft.Text("Error loading speakers.", size=13, color="#FF453A"))
 
     return ft.Container(content=content, padding=20, expand=True)
