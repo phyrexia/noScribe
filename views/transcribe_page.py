@@ -246,14 +246,19 @@ def build_transcribe_page(page: ft.Page, state: AppState) -> ft.Control:
             get_config=get_config,
         )
 
+    # ---- Speaker naming bridge (worker↔UI) ----
+    from views.dialogs.speaker_naming import SpeakerNamingBridge
+    _speaker_bridge = SpeakerNamingBridge()
+    _speaker_bridge.setup(page)
+    page.pubsub.subscribe(_speaker_bridge.on_pubsub_message)
+
     def _run_job_thread(job: TranscriptionJob):
         """Run transcription in a background thread."""
         from transcription_runner import run_transcription
-        from views.dialogs.speaker_naming import show_speaker_naming_dialog
 
         def speaker_naming_fn(speakers_data, audio_path):
-            """Called from worker thread — shows dialog on UI thread via Future."""
-            return show_speaker_naming_dialog(page, speakers_data, audio_path)
+            """Called from worker thread — uses pubsub bridge to show dialog on UI thread."""
+            return _speaker_bridge.request_naming(speakers_data, audio_path)
 
         def log_fn(text, level='info'):
             color = None
