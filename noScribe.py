@@ -1992,7 +1992,7 @@ class App(ctk.CTk):
                 entry_path = os.path.join(dir, entry)
                 if os.path.isdir(entry_path):
                     if entry in self.whisper_model_paths:
-                        self.logn(t('err_invalid_model', entry), 'error')
+                        self.logn(t('err_invalid_model', model_name=entry), 'error')
                     else:
                         self.whisper_model_paths[entry] = entry_path
 
