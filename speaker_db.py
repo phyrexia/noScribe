@@ -140,3 +140,78 @@ def delete_speaker(name: str) -> None:
         if s["name"].strip().lower() != name.strip().lower()
     ]
     save_db(db)
+
+
+def rename_speaker(old_name: str, new_name: str) -> bool:
+    """Rename a speaker. Returns True if found and renamed."""
+    db = load_db()
+    found = False
+    for s in db.get("speakers", []):
+        if s["name"].strip().lower() == old_name.strip().lower():
+            s["name"] = new_name.strip()
+            found = True
+    if found:
+        save_db(db)
+    return found
+
+
+def merge_speakers(name_keep: str, name_absorb: str) -> bool:
+    """Merge two speakers: blend embeddings and keep name_keep. Deletes name_absorb."""
+    try:
+        import numpy as np
+    except ImportError:
+        return False
+
+    db = load_db()
+    speakers = db.get("speakers", [])
+    keep = None
+    absorb = None
+    for s in speakers:
+        if s["name"].strip().lower() == name_keep.strip().lower():
+            keep = s
+        elif s["name"].strip().lower() == name_absorb.strip().lower():
+            absorb = s
+
+    if not keep or not absorb:
+        return False
+
+    e1 = np.array(keep["embedding"], dtype=np.float32)
+    e2 = np.array(absorb["embedding"], dtype=np.float32)
+    blended = (e1 + e2) / 2.0
+    norm = float(np.linalg.norm(blended))
+    if norm > 1e-6:
+        blended = blended / norm
+    keep["embedding"] = blended.tolist()
+    keep["updated"] = str(date.today())
+
+    db["speakers"] = [s for s in speakers if s is not absorb]
+    save_db(db)
+    return True
+
+
+def get_speaker_info(name: str) -> dict:
+    """Get full speaker info dict (name, created, updated). None if not found."""
+    db = load_db()
+    for s in db.get("speakers", []):
+        if s["name"].strip().lower() == name.strip().lower():
+            return {
+                "name": s["name"],
+                "created": s.get("created", "?"),
+                "updated": s.get("updated", "?"),
+                "embedding_size": len(s.get("embedding", [])),
+            }
+    return None
+
+
+def get_similarity(name1: str, name2: str) -> float:
+    """Get cosine similarity between two stored speakers."""
+    db = load_db()
+    e1 = e2 = None
+    for s in db.get("speakers", []):
+        if s["name"].strip().lower() == name1.strip().lower():
+            e1 = s.get("embedding")
+        elif s["name"].strip().lower() == name2.strip().lower():
+            e2 = s.get("embedding")
+    if e1 and e2:
+        return _cosine_similarity(e1, e2)
+    return 0.0

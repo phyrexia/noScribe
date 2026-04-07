@@ -102,32 +102,104 @@ def build_settings_page(page: ft.Page, state: AppState) -> ft.Control:
     )
 
     # ---- Speaker DB section ----
+    speaker_table = ft.Column(spacing=4)
+
+    def _build_speaker_row(name, info):
+        """Build a row for one speaker with rename, delete actions."""
+        name_field = ft.TextField(value=name, dense=True, width=160, read_only=True)
+        created = info.get("created", "?") if info else "?"
+        updated = info.get("updated", "?") if info else "?"
+
+        def _on_rename(e):
+            if name_field.read_only:
+                name_field.read_only = False
+                name_field.focus()
+                name_field.update()
+            else:
+                new_name = name_field.value.strip()
+                if new_name and new_name != name:
+                    import speaker_db
+                    speaker_db.rename_speaker(name, new_name)
+                    page.open(ft.SnackBar(ft.Text(f"Renamed: {name} → {new_name}")))
+                    _list_speakers()
+                else:
+                    name_field.read_only = True
+                    name_field.update()
+
+        def _on_delete(e):
+            import speaker_db
+            speaker_db.delete_speaker(name)
+            page.open(ft.SnackBar(ft.Text(f"Deleted: {name}")))
+            _list_speakers()
+
+        def _on_merge(e):
+            """Show merge dialog to pick which speaker to merge into this one."""
+            import speaker_db
+            others = [n for n in speaker_db.list_speakers() if n.lower() != name.lower()]
+            if not others:
+                page.open(ft.SnackBar(ft.Text("No other speakers to merge with.")))
+                return
+
+            merge_dropdown = ft.Dropdown(
+                label="Merge into this speaker",
+                options=[ft.dropdown.Option(n) for n in others],
+                width=200,
+            )
+
+            def _do_merge(e):
+                target = merge_dropdown.value
+                if target:
+                    sim = speaker_db.get_similarity(name, target)
+                    speaker_db.merge_speakers(name, target)
+                    page.close(merge_dlg)
+                    page.open(ft.SnackBar(
+                        ft.Text(f"Merged {target} into {name} (similarity: {int(sim*100)}%)")
+                    ))
+                    _list_speakers()
+
+            merge_dlg = ft.AlertDialog(
+                modal=True,
+                title=ft.Text(f"Merge into '{name}'"),
+                content=ft.Column([
+                    ft.Text("Select speaker to absorb. Their voice signature will be blended.", size=13),
+                    merge_dropdown,
+                ], tight=True, width=300),
+                actions=[
+                    ft.TextButton("Cancel", on_click=lambda e: page.close(merge_dlg)),
+                    ft.ElevatedButton("Merge", on_click=_do_merge, bgcolor="#FF9800", color=ft.Colors.WHITE),
+                ],
+            )
+            page.open(merge_dlg)
+
+        return ft.Container(
+            content=ft.Row([
+                name_field,
+                ft.Text(f"Created: {created}", size=11, color=ft.Colors.ON_SURFACE_VARIANT),
+                ft.Text(f"Updated: {updated}", size=11, color=ft.Colors.ON_SURFACE_VARIANT),
+                ft.IconButton(icon=ft.Icons.EDIT, tooltip="Rename", on_click=_on_rename, icon_size=18),
+                ft.IconButton(icon=ft.Icons.MERGE, tooltip="Merge with another speaker", on_click=_on_merge, icon_size=18),
+                ft.IconButton(icon=ft.Icons.DELETE_OUTLINE, tooltip="Delete", on_click=_on_delete, icon_size=18, icon_color="#FF453A"),
+            ], spacing=8, alignment=ft.MainAxisAlignment.START),
+            border=ft.border.all(1, ft.Colors.OUTLINE_VARIANT),
+            border_radius=8,
+            padding=ft.padding.symmetric(horizontal=12, vertical=6),
+        )
+
     def _list_speakers(e=None):
         try:
             import speaker_db
             names = speaker_db.list_speakers()
             if names:
-                speaker_list.controls = [
-                    ft.Chip(ft.Text(n), on_delete=lambda e, name=n: _delete_speaker(name))
-                    for n in names
-                ]
+                speaker_table.controls = []
+                for n in names:
+                    info = speaker_db.get_speaker_info(n)
+                    speaker_table.controls.append(_build_speaker_row(n, info))
             else:
-                speaker_list.controls = [ft.Text("No saved speakers.", italic=True, size=13)]
-            speaker_list.update()
-        except Exception:
-            speaker_list.controls = [ft.Text("Error loading speakers.", size=13, color="#FF453A")]
-            speaker_list.update()
-
-    def _delete_speaker(name):
-        try:
-            import speaker_db
-            speaker_db.delete_speaker(name)
-            _list_speakers()
-            page.open(ft.SnackBar(ft.Text(f"Deleted speaker: {name}")))
+                speaker_table.controls = [ft.Text("No saved speakers.", italic=True, size=13)]
+            speaker_table.update()
         except Exception as ex:
-            page.open(ft.SnackBar(ft.Text(f"Error: {ex}")))
-
-    speaker_list = ft.Row(wrap=True, spacing=8)
+            speaker_table.controls = [ft.Text(f"Error: {ex}", size=13, color="#FF453A")]
+            speaker_table.update()
 
     # ---- Layout ----
     save_btn = ft.ElevatedButton(
@@ -176,7 +248,7 @@ def build_settings_page(page: ft.Page, state: AppState) -> ft.Control:
                      color=ft.Colors.ON_SURFACE_VARIANT),
             ft.Divider(height=8, color=ft.Colors.TRANSPARENT),
             ft.TextButton("Refresh speaker list", on_click=_list_speakers, icon=ft.Icons.REFRESH),
-            speaker_list,
+            speaker_table,
             ft.Divider(height=24),
 
             save_btn,
