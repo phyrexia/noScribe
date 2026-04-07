@@ -12,8 +12,16 @@ BRAND_BLUE = "#0A84FF"
 
 _play_proc = None
 
+def _ms_to_ts(ms: int) -> str:
+    """Convert milliseconds to HH:MM:SS."""
+    s = ms // 1000
+    m, s = divmod(s, 60)
+    h, m = divmod(m, 60)
+    return f"{h:02d}:{m:02d}:{s:02d}"
+
+
 def _play_audio_segment(audio_path: str, start_ms: int, end_ms: int, app_dir: str):
-    """Play an audio segment using ffplay."""
+    """Play an audio segment using ffmpeg to extract + afplay to play."""
     global _play_proc
     # Kill any existing playback
     if _play_proc and _play_proc.poll() is None:
@@ -24,37 +32,51 @@ def _play_audio_segment(audio_path: str, start_ms: int, end_ms: int, app_dir: st
 
     duration_ms = end_ms - start_ms
     if duration_ms <= 0:
+        print(f"[speaker play] invalid duration: {start_ms}-{end_ms}")
         return
 
-    # Find ffplay
-    if platform.system() == "Darwin":
-        ffplay = os.path.join(app_dir, 'ffplay') if os.path.exists(os.path.join(app_dir, 'ffplay')) else 'ffplay'
-    else:
-        ffplay = 'ffplay'
+    if not os.path.exists(audio_path):
+        print(f"[speaker play] audio not found: {audio_path}")
+        return
 
-    # Use ffmpeg-arm64's directory or system ffplay
-    # Actually use afplay on macOS (simpler, always available) with ffmpeg for extraction
+    # Find ffmpeg
     ffmpeg_arm64 = os.path.join(app_dir, 'ffmpeg-arm64')
-    ffmpeg = ffmpeg_arm64 if os.path.exists(ffmpeg_arm64) else os.path.join(app_dir, 'ffmpeg')
+    ffmpeg_std = os.path.join(app_dir, 'ffmpeg')
+    if platform.machine() == "arm64" and os.path.exists(ffmpeg_arm64):
+        ffmpeg = ffmpeg_arm64
+    elif os.path.exists(ffmpeg_std):
+        ffmpeg = ffmpeg_std
+    else:
+        ffmpeg = 'ffmpeg'  # system fallback
 
-    # Extract segment to temp file and play with afplay
     import tempfile
     tmp = tempfile.NamedTemporaryFile(suffix='.wav', delete=False)
     tmp.close()
 
-    cmd = f'{ffmpeg} -loglevel quiet -y -ss {start_ms}ms -t {duration_ms}ms -i "{audio_path}" -ar 16000 -ac 1 "{tmp.name}"'
+    # Extract segment
+    cmd = f'"{ffmpeg}" -loglevel warning -y -ss {start_ms}ms -t {duration_ms}ms -i "{audio_path}" -ar 44100 -ac 1 "{tmp.name}"'
     if platform.system() != "Windows":
         cmd = shlex.split(cmd)
 
     try:
         p = Popen(cmd, stdout=DEVNULL, stderr=DEVNULL)
-        p.wait(timeout=5)
+        rc = p.wait(timeout=10)
+        if rc != 0:
+            print(f"[speaker play] ffmpeg failed with code {rc}")
+            return
+
+        # Check file has content
+        if os.path.getsize(tmp.name) < 100:
+            print(f"[speaker play] extracted file too small: {os.path.getsize(tmp.name)} bytes")
+            return
+
         if platform.system() == "Darwin":
-            _play_proc = Popen(['afplay', tmp.name], stdout=DEVNULL, stderr=DEVNULL)
+            _play_proc = Popen(['afplay', tmp.name])
         else:
             _play_proc = Popen(['ffplay', '-nodisp', '-autoexit', tmp.name], stdout=DEVNULL, stderr=DEVNULL)
-    except Exception:
-        pass
+        print(f"[speaker play] playing {_ms_to_ts(start_ms)}-{_ms_to_ts(end_ms)}")
+    except Exception as e:
+        print(f"[speaker play] error: {e}")
 
 
 class SpeakerNamingBridge:
@@ -121,13 +143,14 @@ class SpeakerNamingBridge:
             )
             save_checkboxes[lbl] = save_cb
 
-            # Audio sample play buttons
+            # Audio sample play buttons with timestamps
             samples = spk.get('samples', [])
             play_buttons = []
             for idx, sample in enumerate(samples[:2]):
                 s_start = sample.get('start', 0)
                 s_end = sample.get('end', 0)
                 dur = round((s_end - s_start) / 1000, 1)
+                ts_label = f"{_ms_to_ts(s_start)}"
 
                 def _make_play(st=s_start, en=s_end):
                     def _play(e):
@@ -139,20 +162,23 @@ class SpeakerNamingBridge:
                     return _play
 
                 play_buttons.append(
-                    ft.IconButton(
-                        icon=ft.Icons.PLAY_CIRCLE_OUTLINE,
-                        tooltip=f"Sample {idx+1} ({dur}s)",
-                        icon_size=20,
+                    ft.TextButton(
+                        content=ft.Row([
+                            ft.Icon(ft.Icons.PLAY_ARROW, size=16),
+                            ft.Text(f"{ts_label} ({dur}s)", size=11),
+                        ], spacing=2, tight=True),
+                        tooltip=f"Play sample at {ts_label}",
                         on_click=_make_play(),
                     )
                 )
 
+            # Build row: name | play buttons | confidence | save
             row_controls = [name_field]
             if play_buttons:
-                row_controls.extend(play_buttons)
+                row_controls.append(ft.Row(play_buttons, spacing=2))
             row_controls.append(confidence)
             row_controls.append(save_cb)
-            rows.append(ft.Row(row_controls, spacing=4))
+            rows.append(ft.Row(row_controls, spacing=6))
 
         def _on_ok(e):
             result = {}
