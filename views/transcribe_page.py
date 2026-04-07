@@ -133,7 +133,7 @@ def build_transcribe_page(page: ft.Page, state: AppState) -> ft.Control:
         ],
         width=220,
         dense=True,
-        on_change=on_filetype_change,
+        on_select=on_filetype_change,
     )
 
     overlapping_cb = ft.Checkbox(label="Overlapping speech", value=True)
