@@ -140,6 +140,15 @@ def build_transcribe_page(page: ft.Page, state: AppState) -> ft.Control:
     timestamps_cb = ft.Checkbox(label="Timestamps", value=False)
     disfluencies_cb = ft.Checkbox(label="Disfluencies", value=True)
 
+    anthropic_key = ft.TextField(
+        label="Anthropic API Key",
+        value=state.get_config('anthropic_api_key', ''),
+        password=True,
+        can_reveal_password=True,
+        width=220,
+        dense=True,
+    )
+
     start_time = ft.TextField(
         label="Start", value="00:00:00", width=120, dense=True,
         input_filter=ft.InputFilter(r"[0-9:]"),
@@ -332,6 +341,54 @@ def build_transcribe_page(page: ft.Page, state: AppState) -> ft.Control:
         on_click=on_stop_click,
     )
 
+    def on_summarize_click(e):
+        key = anthropic_key.value.strip()
+        if not key:
+            append_log("Please enter your Anthropic API Key first.", "#FF453A")
+            return
+        # Save key to config
+        state.set_config('anthropic_api_key', key)
+        state.save_config()
+        # Get transcript text from last job
+        if not state.transcript_files:
+            append_log("No transcript file to summarize.", "#FF453A")
+            return
+        transcript_path = state.transcript_files[0]
+        if not os.path.exists(transcript_path):
+            append_log(f"File not found: {transcript_path}", "#FF453A")
+            return
+        append_log("Generating AI summary...", BRAND_BLUE)
+        summarize_btn.disabled = True
+        summarize_btn.update()
+
+        def _do_summarize():
+            try:
+                with open(transcript_path, 'r', encoding='utf-8') as f:
+                    text = f.read()
+                from anthropic_summarizer import generate_meeting_summary
+                result = generate_meeting_summary(key, text)
+                append_log("", None)
+                append_log("━━━ AI Summary ━━━", BRAND_BLUE)
+                for line in result.split('\n'):
+                    append_log(line, None)
+                append_log("━━━━━━━━━━━━━━━━━━", BRAND_BLUE)
+            except Exception as ex:
+                append_log(f"Summary error: {ex}", "#FF453A")
+            finally:
+                try:
+                    summarize_btn.disabled = False
+                    summarize_btn.update()
+                except Exception:
+                    pass
+
+        threading.Thread(target=_do_summarize, daemon=True).start()
+
+    summarize_btn = ft.ElevatedButton(
+        "Generar Resumen",
+        icon=ft.Icons.AUTO_AWESOME,
+        on_click=on_summarize_click,
+    )
+
     # ---- Layout -------------------------------------------------------
     options_col = ft.Column(
         [
@@ -371,6 +428,8 @@ def build_transcribe_page(page: ft.Page, state: AppState) -> ft.Control:
             overlapping_cb,
             disfluencies_cb,
             timestamps_cb,
+            ft.Divider(height=8, color=ft.Colors.TRANSPARENT),
+            anthropic_key,
             ft.Divider(height=12, color=ft.Colors.TRANSPARENT),
             start_btn,
             queue_btn,
@@ -386,7 +445,7 @@ def build_transcribe_page(page: ft.Page, state: AppState) -> ft.Control:
             ft.Row(
                 [
                     ft.Text("Log", size=16, weight=ft.FontWeight.W_500),
-                    ft.Row([stop_btn], spacing=4),
+                    ft.Row([summarize_btn, stop_btn], spacing=4),
                 ],
                 alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
             ),
