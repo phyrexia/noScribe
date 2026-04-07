@@ -67,12 +67,14 @@ def run_transcription(
     log_fn=None,
     progress_fn=None,
     cancel_check=None,
+    speaker_naming_fn=None,
 ):
     """Run a full transcription pipeline for one job.
 
     log_fn(text, level='info')  — 'info', 'highlight', 'error'
     progress_fn(pct)            — 0-100
     cancel_check()              — returns True if user requested cancel
+    speaker_naming_fn(speakers_data, audio_path) — returns {label: name} map, or None to skip
     """
     if log_fn is None:
         log_fn = lambda text, level='info': print(f"[{level}] {text}")
@@ -161,6 +163,7 @@ def run_transcription(
                     elif mtype == "result":
                         if msg.get("ok"):
                             diarization = msg.get("segments", [])
+                            embeddings = msg.get("embeddings", {})
                         else:
                             err = msg.get("error", "Diarization failed")
                             trace = msg.get("trace", "")
@@ -177,7 +180,47 @@ def run_transcription(
                 if p.is_alive():
                     p.terminate()
 
-            log_fn(f"Found {len(set(s['label'] for s in diarization))} speakers.", 'info')
+            unique_speakers = sorted(set(s['label'] for s in diarization))
+            log_fn(f"Found {len(unique_speakers)} speakers.", 'info')
+
+            # Speaker naming — ask the user to assign names
+            speaker_name_map = {}
+            if speaker_naming_fn and embeddings:
+                # Build speaker data for the dialog
+                speaker_segs_map = {}
+                for seg in diarization:
+                    speaker_segs_map.setdefault(seg["label"], []).append(seg)
+
+                speakers_data = []
+                for lbl in unique_speakers:
+                    short = f'S{lbl[8:]}' if len(lbl) > 8 else lbl
+                    emb = embeddings.get(lbl)
+                    matched_name, sim = None, 0.0
+                    if emb:
+                        try:
+                            import speaker_db
+                            matched_name, sim = speaker_db.find_match(emb)
+                        except Exception:
+                            pass
+                    segs = speaker_segs_map.get(lbl, [])
+                    sorted_segs = sorted(segs, key=lambda s: s["end"] - s["start"], reverse=True)
+                    samples = [{"start": s["start"], "end": s["end"]} for s in sorted_segs[:2]]
+                    speakers_data.append({
+                        'label': lbl,
+                        'short_label': short,
+                        'matched_name': matched_name,
+                        'similarity': sim,
+                        'embedding': emb,
+                        'samples': samples,
+                    })
+
+                try:
+                    result = speaker_naming_fn(speakers_data, tmp_audio)
+                    if result:
+                        speaker_name_map = result
+                except Exception as e:
+                    log_fn(f"Speaker naming skipped: {e}", 'info')
+
             progress_fn(50)
         else:
             progress_fn(50)
@@ -249,6 +292,7 @@ def run_transcription(
                         from transcription_service import find_speaker
                         speaker = find_speaker(
                             diarization, start_ms, end_ms,
+                            speaker_name_map=speaker_name_map,
                             overlapping_enabled=job.overlapping
                         )
 

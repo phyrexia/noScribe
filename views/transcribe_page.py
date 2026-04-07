@@ -241,6 +241,11 @@ def build_transcribe_page(page: ft.Page, state: AppState) -> ft.Control:
     def _run_job_thread(job: TranscriptionJob):
         """Run transcription in a background thread."""
         from transcription_runner import run_transcription
+        from views.dialogs.speaker_naming import show_speaker_naming_dialog
+
+        def speaker_naming_fn(speakers_data, audio_path):
+            """Called from worker thread — shows dialog on UI thread via Future."""
+            return show_speaker_naming_dialog(page, speakers_data, audio_path)
 
         def log_fn(text, level='info'):
             color = None
@@ -273,6 +278,7 @@ def build_transcribe_page(page: ft.Page, state: AppState) -> ft.Control:
                 log_fn=log_fn,
                 progress_fn=progress_fn,
                 cancel_check=lambda: state.cancel,
+                speaker_naming_fn=speaker_naming_fn,
             )
         finally:
             try:
