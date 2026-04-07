@@ -1,6 +1,7 @@
 # MeetingGenie - Speaker Naming Dialog
 # Shows detected speakers and lets user assign names
 
+import asyncio
 import threading
 import flet as ft
 
@@ -8,9 +9,8 @@ BRAND_BLUE = "#0A84FF"
 
 
 def show_speaker_naming_dialog(page: ft.Page, speakers_data: list, audio_path: str) -> dict:
-    """Show a dialog for naming speakers. Blocks until user responds.
+    """Show a dialog for naming speakers. Blocks the worker thread until user responds.
 
-    Called from a worker thread — uses threading.Event to block.
     Returns {label: name} dict, or {} if skipped.
     """
     result_holder = [{}]
@@ -26,7 +26,6 @@ def show_speaker_naming_dialog(page: ft.Page, speakers_data: list, audio_path: s
         matched = spk.get('matched_name', '')
         sim = spk.get('similarity', 0.0)
 
-        # Pre-fill with matched name if confidence > 0.7
         default_name = matched if matched and sim > 0.7 else short
 
         name_field = ft.TextField(
@@ -37,7 +36,6 @@ def show_speaker_naming_dialog(page: ft.Page, speakers_data: list, audio_path: s
         )
         name_fields[lbl] = name_field
 
-        # Confidence badge
         if matched and sim > 0:
             pct = int(sim * 100)
             if sim > 0.8:
@@ -66,29 +64,6 @@ def show_speaker_naming_dialog(page: ft.Page, speakers_data: list, audio_path: s
             ft.Row([name_field, confidence, save_cb], spacing=8)
         )
 
-    def on_ok(e):
-        result = {}
-        for lbl, field in name_fields.items():
-            name = field.value.strip()
-            if name:
-                result[lbl] = name
-                if save_checkboxes[lbl].value:
-                    spk_data = next((s for s in speakers_data if s['label'] == lbl), None)
-                    if spk_data and spk_data.get('embedding'):
-                        try:
-                            import speaker_db
-                            speaker_db.save_speaker(name, spk_data['embedding'])
-                        except Exception:
-                            pass
-        result_holder[0] = result
-        page.close(dlg)
-        done_event.set()
-
-    def on_skip(e):
-        result_holder[0] = {}
-        page.close(dlg)
-        done_event.set()
-
     dlg = ft.AlertDialog(
         modal=True,
         title=ft.Text("Identify Speakers"),
@@ -106,16 +81,40 @@ def show_speaker_naming_dialog(page: ft.Page, speakers_data: list, audio_path: s
             width=450,
         ),
         actions=[
-            ft.TextButton("Skip", on_click=on_skip),
-            ft.ElevatedButton("OK", on_click=on_ok, bgcolor=BRAND_BLUE, color=ft.Colors.WHITE),
+            ft.TextButton("Skip", on_click=lambda e: _close(False)),
+            ft.ElevatedButton("OK", on_click=lambda e: _close(True),
+                              bgcolor=BRAND_BLUE, color=ft.Colors.WHITE),
         ],
         actions_alignment=ft.MainAxisAlignment.END,
     )
 
-    # Open dialog from UI thread
-    page.open(dlg)
-    page.update()
+    def _close(save: bool):
+        if save:
+            result = {}
+            for lbl, field in name_fields.items():
+                name = field.value.strip()
+                if name:
+                    result[lbl] = name
+                    if save_checkboxes[lbl].value:
+                        spk_data = next((s for s in speakers_data if s['label'] == lbl), None)
+                        if spk_data and spk_data.get('embedding'):
+                            try:
+                                import speaker_db
+                                speaker_db.save_speaker(name, spk_data['embedding'])
+                            except Exception:
+                                pass
+            result_holder[0] = result
+        else:
+            result_holder[0] = {}
+        page.close(dlg)
+        done_event.set()
 
-    # Block worker thread until user responds
+    # Schedule dialog open on the UI thread via run_task
+    async def _open_dialog():
+        page.open(dlg)
+
+    page.run_task(_open_dialog)
+
+    # Block worker thread until user clicks OK or Skip
     done_event.wait(timeout=300)
     return result_holder[0]
