@@ -258,7 +258,7 @@ def build_transcribe_page(page: ft.Page, state: AppState) -> ft.Control:
 
         def speaker_naming_fn(speakers_data, audio_path):
             """Called from worker thread — uses pubsub bridge to show dialog on UI thread."""
-            return _speaker_bridge.request_naming(speakers_data, audio_path)
+            return _speaker_bridge.request_naming(speakers_data, audio_path, app_dir=state.app_dir)
 
         def log_fn(text, level='info'):
             color = None

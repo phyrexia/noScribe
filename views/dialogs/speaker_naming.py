@@ -1,10 +1,60 @@
 # MeetingGenie - Speaker Naming Dialog
 # Uses page.pubsub to communicate between worker thread and UI thread.
 
+import os
+import platform
+import shlex
 import threading
+from subprocess import Popen, DEVNULL
 import flet as ft
 
 BRAND_BLUE = "#0A84FF"
+
+_play_proc = None
+
+def _play_audio_segment(audio_path: str, start_ms: int, end_ms: int, app_dir: str):
+    """Play an audio segment using ffplay."""
+    global _play_proc
+    # Kill any existing playback
+    if _play_proc and _play_proc.poll() is None:
+        try:
+            _play_proc.terminate()
+        except Exception:
+            pass
+
+    duration_ms = end_ms - start_ms
+    if duration_ms <= 0:
+        return
+
+    # Find ffplay
+    if platform.system() == "Darwin":
+        ffplay = os.path.join(app_dir, 'ffplay') if os.path.exists(os.path.join(app_dir, 'ffplay')) else 'ffplay'
+    else:
+        ffplay = 'ffplay'
+
+    # Use ffmpeg-arm64's directory or system ffplay
+    # Actually use afplay on macOS (simpler, always available) with ffmpeg for extraction
+    ffmpeg_arm64 = os.path.join(app_dir, 'ffmpeg-arm64')
+    ffmpeg = ffmpeg_arm64 if os.path.exists(ffmpeg_arm64) else os.path.join(app_dir, 'ffmpeg')
+
+    # Extract segment to temp file and play with afplay
+    import tempfile
+    tmp = tempfile.NamedTemporaryFile(suffix='.wav', delete=False)
+    tmp.close()
+
+    cmd = f'{ffmpeg} -loglevel quiet -y -ss {start_ms}ms -t {duration_ms}ms -i "{audio_path}" -ar 16000 -ac 1 "{tmp.name}"'
+    if platform.system() != "Windows":
+        cmd = shlex.split(cmd)
+
+    try:
+        p = Popen(cmd, stdout=DEVNULL, stderr=DEVNULL)
+        p.wait(timeout=5)
+        if platform.system() == "Darwin":
+            _play_proc = Popen(['afplay', tmp.name], stdout=DEVNULL, stderr=DEVNULL)
+        else:
+            _play_proc = Popen(['ffplay', '-nodisp', '-autoexit', tmp.name], stdout=DEVNULL, stderr=DEVNULL)
+    except Exception:
+        pass
 
 
 class SpeakerNamingBridge:
@@ -25,10 +75,12 @@ class SpeakerNamingBridge:
         """Call from UI thread during page setup."""
         self._page = page
 
-    def request_naming(self, speakers_data: list, audio_path: str) -> dict:
+    def request_naming(self, speakers_data: list, audio_path: str, app_dir: str = '') -> dict:
         """Call from worker thread. Blocks until user responds. Returns {label: name}."""
         self._done_event.clear()
         self._result = {}
+        self._audio_path = audio_path
+        self._app_dir = app_dir
 
         # Build dialog controls
         name_fields = {}
@@ -68,7 +120,39 @@ class SpeakerNamingBridge:
                 value=bool(matched and sim > 0.7),
             )
             save_checkboxes[lbl] = save_cb
-            rows.append(ft.Row([name_field, confidence, save_cb], spacing=8))
+
+            # Audio sample play buttons
+            samples = spk.get('samples', [])
+            play_buttons = []
+            for idx, sample in enumerate(samples[:2]):
+                s_start = sample.get('start', 0)
+                s_end = sample.get('end', 0)
+                dur = round((s_end - s_start) / 1000, 1)
+
+                def _make_play(st=s_start, en=s_end):
+                    def _play(e):
+                        threading.Thread(
+                            target=_play_audio_segment,
+                            args=(self._audio_path, st, en, self._app_dir),
+                            daemon=True,
+                        ).start()
+                    return _play
+
+                play_buttons.append(
+                    ft.IconButton(
+                        icon=ft.Icons.PLAY_CIRCLE_OUTLINE,
+                        tooltip=f"Sample {idx+1} ({dur}s)",
+                        icon_size=20,
+                        on_click=_make_play(),
+                    )
+                )
+
+            row_controls = [name_field]
+            if play_buttons:
+                row_controls.extend(play_buttons)
+            row_controls.append(confidence)
+            row_controls.append(save_cb)
+            rows.append(ft.Row(row_controls, spacing=4))
 
         def _on_ok(e):
             result = {}
