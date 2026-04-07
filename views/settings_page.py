@@ -23,7 +23,7 @@ def build_settings_page(page: ft.Page, state: AppState) -> ft.Control:
     def _save_all(e=None):
         set_config('anthropic_api_key', api_key_field.value.strip())
         set_config('summary_prompt', prompt_field.value.strip())
-        set_config('summary_model', model_field.value.strip())
+        set_config('summary_model', model_field.value or 'claude-sonnet-4-20250514')
         set_config('summary_max_tokens', int(max_tokens_field.value or 1500))
         set_config('summary_temperature', float(temp_field.value or 0.3))
         set_config('proxy_url', proxy_field.value.strip())
@@ -46,11 +46,16 @@ def build_settings_page(page: ft.Page, state: AppState) -> ft.Control:
         width=400,
     )
 
-    model_field = ft.TextField(
+    model_field = ft.Dropdown(
         label="Summary model",
         value=get_config('summary_model', 'claude-sonnet-4-20250514'),
         width=400,
-        hint_text="e.g. claude-sonnet-4-20250514",
+        options=[
+            ft.dropdown.Option("claude-sonnet-4-20250514", "Claude Sonnet 4 (fast, cheap)"),
+            ft.dropdown.Option("claude-opus-4-20250514", "Claude Opus 4 (most capable)"),
+            ft.dropdown.Option("claude-haiku-4-20250414", "Claude Haiku 4 (fastest, cheapest)"),
+            ft.dropdown.Option("claude-3-5-sonnet-20241022", "Claude 3.5 Sonnet (legacy)"),
+        ],
     )
 
     prompt_field = ft.TextField(

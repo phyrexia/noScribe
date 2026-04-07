@@ -140,6 +140,13 @@ def build_transcribe_page(page: ft.Page, state: AppState) -> ft.Control:
     timestamps_cb = ft.Checkbox(label="Timestamps", value=False)
     disfluencies_cb = ft.Checkbox(label="Disfluencies", value=True)
 
+    def _on_api_key_blur(e):
+        """Auto-save API key when field loses focus."""
+        val = anthropic_key.value.strip()
+        if val:
+            state.set_config('anthropic_api_key', val)
+            state.save_config()
+
     anthropic_key = ft.TextField(
         label="Anthropic API Key",
         value=state.get_config('anthropic_api_key', ''),
@@ -147,6 +154,7 @@ def build_transcribe_page(page: ft.Page, state: AppState) -> ft.Control:
         can_reveal_password=True,
         width=220,
         dense=True,
+        on_blur=_on_api_key_blur,
     )
 
     start_time = ft.TextField(
