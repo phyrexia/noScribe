@@ -6,6 +6,6 @@ if [ -d "venv" ]; then
     source venv/bin/activate
 fi
 
-# Ejecutar noScribe
-echo "Iniciando noScribe..."
+# Ejecutar MeetingGenie
+echo "Iniciando MeetingGenie..."
 python3 noScribe.py
