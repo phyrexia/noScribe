@@ -36,6 +36,9 @@ class AppState:
         # Model paths cache
         self.whisper_model_paths: dict[str, str] = {}
 
+        # Last generated summary
+        self.last_summary_path: str = ""
+
     def get_language_names(self) -> list[str]:
         return list(self.languages.keys())
 

@@ -386,11 +386,24 @@ def build_transcribe_page(page: ft.Page, state: AppState) -> ft.Control:
                     text = f.read()
                 from anthropic_summarizer import generate_meeting_summary
                 result = generate_meeting_summary(key, text)
+
+                # Save as .md next to transcript
+                md_path = os.path.splitext(transcript_path)[0] + "_summary.md"
+                with open(md_path, 'w', encoding='utf-8') as f:
+                    f.write(f"# Meeting Summary\n\n")
+                    f.write(f"**Source:** {os.path.basename(transcript_path)}\n\n")
+                    f.write(result)
+                state.last_summary_path = md_path
+
                 append_log("", None)
                 append_log("━━━ AI Summary ━━━", BRAND_BLUE)
                 for line in result.split('\n'):
                     append_log(line, None)
                 append_log("━━━━━━━━━━━━━━━━━━", BRAND_BLUE)
+                append_log(f"Saved: {md_path}", BRAND_BLUE)
+
+                # Signal editor to open the summary
+                state.bus.publish(EventType.JOB_FINISHED, {"summary_path": md_path, "transcript_path": transcript_path})
             except Exception as ex:
                 append_log(f"Summary error: {ex}", "#FF453A")
             finally:
