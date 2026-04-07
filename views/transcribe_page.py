@@ -112,6 +112,16 @@ def build_transcribe_page(page: ft.Page, state: AppState) -> ft.Control:
         dense=True,
     )
 
+    def on_filetype_change(e):
+        """Update transcript filename extension when format changes."""
+        if state.transcript_files:
+            base = os.path.splitext(state.transcript_files[0])[0]
+            ext = filetype_dropdown.value or "txt"
+            state.transcript_files = [f"{base}.{ext}"]
+            transcript_file_text.value = os.path.basename(state.transcript_files[0])
+            transcript_file_text.italic = False
+            page.update()
+
     filetype_dropdown = ft.Dropdown(
         label="Output format",
         value="txt",
@@ -123,6 +133,7 @@ def build_transcribe_page(page: ft.Page, state: AppState) -> ft.Control:
         ],
         width=220,
         dense=True,
+        on_change=on_filetype_change,
     )
 
     overlapping_cb = ft.Checkbox(label="Overlapping speech", value=True)
