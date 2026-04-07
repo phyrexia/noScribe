@@ -185,7 +185,8 @@ def run_transcription(
 
             # Speaker naming — ask the user to assign names
             speaker_name_map = {}
-            if speaker_naming_fn and embeddings:
+            log_fn(f"Embeddings: {len(embeddings)} speakers, callback: {'yes' if speaker_naming_fn else 'no'}", 'info')
+            if speaker_naming_fn and unique_speakers:
                 # Build speaker data for the dialog
                 speaker_segs_map = {}
                 for seg in diarization:

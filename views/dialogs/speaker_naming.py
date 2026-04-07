@@ -1,7 +1,7 @@
 # MeetingGenie - Speaker Naming Dialog
 # Shows detected speakers and lets user assign names
 
-import concurrent.futures
+import threading
 import flet as ft
 
 BRAND_BLUE = "#0A84FF"
@@ -10,10 +10,11 @@ BRAND_BLUE = "#0A84FF"
 def show_speaker_naming_dialog(page: ft.Page, speakers_data: list, audio_path: str) -> dict:
     """Show a dialog for naming speakers. Blocks until user responds.
 
+    Called from a worker thread — uses threading.Event to block.
     Returns {label: name} dict, or {} if skipped.
-    Called from a worker thread — uses Future to block.
     """
-    future = concurrent.futures.Future()
+    result_holder = [{}]
+    done_event = threading.Event()
 
     name_fields = {}
     save_checkboxes = {}
@@ -46,7 +47,7 @@ def show_speaker_naming_dialog(page: ft.Page, speakers_data: list, audio_path: s
             else:
                 badge_color = "#9E9E9E"
             confidence = ft.Container(
-                content=ft.Text(f"{pct}%", size=11, color=ft.Colors.WHITE),
+                content=ft.Text(f"{matched} ({pct}%)", size=11, color=ft.Colors.WHITE),
                 bgcolor=badge_color,
                 border_radius=10,
                 padding=ft.padding.symmetric(horizontal=8, vertical=2),
@@ -71,7 +72,6 @@ def show_speaker_naming_dialog(page: ft.Page, speakers_data: list, audio_path: s
             name = field.value.strip()
             if name:
                 result[lbl] = name
-                # Save to speaker DB if checkbox is checked
                 if save_checkboxes[lbl].value:
                     spk_data = next((s for s in speakers_data if s['label'] == lbl), None)
                     if spk_data and spk_data.get('embedding'):
@@ -80,12 +80,14 @@ def show_speaker_naming_dialog(page: ft.Page, speakers_data: list, audio_path: s
                             speaker_db.save_speaker(name, spk_data['embedding'])
                         except Exception:
                             pass
+        result_holder[0] = result
         page.close(dlg)
-        future.set_result(result)
+        done_event.set()
 
     def on_skip(e):
+        result_holder[0] = {}
         page.close(dlg)
-        future.set_result({})
+        done_event.set()
 
     dlg = ft.AlertDialog(
         modal=True,
@@ -93,7 +95,7 @@ def show_speaker_naming_dialog(page: ft.Page, speakers_data: list, audio_path: s
         content=ft.Column(
             [
                 ft.Text(
-                    "Assign names to detected speakers. Check 'Save' to remember voice signatures.",
+                    "Assign names to detected speakers.\nCheck 'Save' to remember voice signatures for future use.",
                     size=13,
                 ),
                 ft.Divider(height=8),
@@ -101,7 +103,7 @@ def show_speaker_naming_dialog(page: ft.Page, speakers_data: list, audio_path: s
             ],
             tight=True,
             spacing=10,
-            width=400,
+            width=450,
         ),
         actions=[
             ft.TextButton("Skip", on_click=on_skip),
@@ -110,7 +112,10 @@ def show_speaker_naming_dialog(page: ft.Page, speakers_data: list, audio_path: s
         actions_alignment=ft.MainAxisAlignment.END,
     )
 
+    # Open dialog from UI thread
     page.open(dlg)
+    page.update()
 
-    # Block worker thread until dialog is resolved
-    return future.result(timeout=300)
+    # Block worker thread until user responds
+    done_event.wait(timeout=300)
+    return result_holder[0]
