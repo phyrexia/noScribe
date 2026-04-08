@@ -51,7 +51,10 @@ def build_shell(page: ft.Page, state: AppState, pages: dict[str, ft.Control]):
                     ],
                     spacing=8,
                 ),
-                ft.Row([theme_btn], spacing=4),
+                ft.Row([
+                    state.live_btn if hasattr(state, 'live_btn') else ft.Container(),
+                    theme_btn,
+                ], spacing=4),
             ],
             alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
         ),

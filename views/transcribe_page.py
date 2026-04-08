@@ -2,7 +2,10 @@
 # File selection, options, start button, log output, progress bar
 
 import os
+import platform
 import threading
+import multiprocessing as mp
+import queue as pyqueue
 import flet as ft
 from app_state import AppState
 from event_bus import EventType
@@ -494,12 +497,163 @@ def build_transcribe_page(page: ft.Page, state: AppState) -> ft.Control:
         spacing=8,
     )
 
+    # ---- Live Mode -------------------------------------------------------
+    live_output = ft.TextField(
+        multiline=True,
+        read_only=True,
+        min_lines=20,
+        expand=True,
+        text_size=18,
+        value="Listening for audio...\n\n",
+        border=ft.InputBorder.NONE,
+        content_padding=ft.padding.all(16),
+    )
+
+    live_col = ft.Column(
+        [
+            ft.Row(
+                [
+                    ft.Row([
+                        ft.Icon(ft.Icons.FIBER_MANUAL_RECORD, color="#FF453A", size=14),
+                        ft.Text("Live Transcription", size=16, weight=ft.FontWeight.W_500),
+                    ], spacing=6),
+                ],
+            ),
+            ft.Container(
+                content=live_output,
+                expand=True,
+                border=ft.border.all(1, "#FF453A"),
+                border_radius=8,
+            ),
+        ],
+        expand=True,
+        spacing=8,
+        visible=False,
+    )
+
+    # Right panel switches between log and live
+    right_panel = ft.Column(
+        [log_col, live_col],
+        expand=True,
+    )
+
+    def _live_target(args, q, stop_event):
+        """Wrapper to import live worker only in subprocess."""
+        from live_mp_worker import live_proc_entrypoint
+        live_proc_entrypoint(args, q, stop_event)
+
+    def _poll_live_queue(live_q, stop_evt):
+        """Poll live queue in a thread and push segments to UI."""
+        while not stop_evt.is_set():
+            try:
+                msg = live_q.get(timeout=0.3)
+            except pyqueue.Empty:
+                continue
+            except Exception:
+                break
+
+            mtype = msg.get("type")
+            if mtype == "live_segment":
+                text = msg.get("text", "")
+                try:
+                    live_output.value = (live_output.value or "") + f"- {text}\n"
+                    live_output.update()
+                except Exception:
+                    pass
+            elif mtype == "log":
+                append_log(f"[Live] {msg.get('msg', '')}", None)
+            elif mtype == "live_finished":
+                break
+
+        state.live_process_running = False
+        try:
+            live_btn.text = "Live Mode"
+            live_btn.bgcolor = "#D84315"
+            live_btn.update()
+            live_col.visible = False
+            log_col.visible = True
+            right_panel.update()
+        except Exception:
+            pass
+
+    def _toggle_live(e):
+        if state.live_process_running:
+            # Stop
+            if hasattr(state, '_live_stop_event'):
+                state._live_stop_event.set()
+            return
+
+        # Start
+        state.live_process_running = True
+        live_btn.text = "Stop Live"
+        live_btn.bgcolor = "#C62828"
+        live_btn.update()
+
+        # Show live panel, hide log
+        live_output.value = "Listening for audio...\n\n"
+        live_col.visible = True
+        log_col.visible = False
+        right_panel.update()
+
+        # Prepare args
+        sel_model = model_dropdown.value or "fast"
+        model_path = model_manager.get_model_path_for_app(sel_model) or sel_model
+
+        language_name = language_dropdown.value or "Auto"
+        language_code = None
+        if language_name not in ('Auto', 'Multilingual'):
+            language_code = state.languages.get(language_name)
+
+        proxy_url = get_config('proxy_url', '')
+        ignore_ssl = get_config('ignore_ssl', 'false').lower() == 'true'
+
+        # SSL env vars for child process
+        os.environ["HF_HUB_OFFLINE"] = "1"
+        os.environ["TRANSFORMERS_OFFLINE"] = "1"
+        if ignore_ssl:
+            os.environ["CURL_CA_BUNDLE"] = ""
+            os.environ["REQUESTS_CA_BUNDLE"] = ""
+
+        args = {
+            "locale": get_config('locale', 'en'),
+            "device": "auto" if platform.system() == "Darwin" else "cpu",
+            "compute_type": get_config('whisper_compute_type', 'int8'),
+            "model_name_or_path": model_path,
+            "input_device_id": None,  # Default system mic
+            "language_code": language_code,
+            "language_name": language_name,
+            "vad_threshold": float(get_config('vad_threshold', 0.5)),
+            "cpu_threads": int(get_config('threads', 4)),
+            "ignore_ssl": ignore_ssl,
+            "proxy_url": proxy_url,
+        }
+
+        live_q = mp.Queue()
+        stop_evt = mp.Event()
+        state._live_stop_event = stop_evt
+
+        proc = mp.Process(target=_live_target, args=(args, live_q, stop_evt), daemon=True)
+        proc.start()
+
+        threading.Thread(target=_poll_live_queue, args=(live_q, stop_evt), daemon=True).start()
+        append_log("Live transcription started.", BRAND_BLUE)
+
+    live_btn = ft.ElevatedButton(
+        "Live Mode",
+        icon=ft.Icons.MIC,
+        bgcolor="#D84315",
+        color=ft.Colors.WHITE,
+        on_click=_toggle_live,
+    )
+    # Expose to shell header
+    state.live_btn = live_btn
+
     return ft.Container(
         content=ft.Row(
             [
                 options_col,
                 ft.VerticalDivider(width=1),
-                log_col,
+                right_panel,
             ],
             expand=True,
             spacing=16,
