@@ -16,6 +16,12 @@ import model_manager
 BRAND_BLUE = "#0A84FF"
 
 
+def _live_target(args, q, stop_event):
+    """Wrapper to import live worker only in subprocess. Must be module-level for pickle."""
+    from live_mp_worker import live_proc_entrypoint
+    live_proc_entrypoint(args, q, stop_event)
+
+
 def build_transcribe_page(page: ft.Page, state: AppState) -> ft.Control:
     """Build the Transcribe page and return the root control."""
 
@@ -537,11 +543,6 @@ def build_transcribe_page(page: ft.Page, state: AppState) -> ft.Control:
         expand=True,
     )
 
-    def _live_target(args, q, stop_event):
-        """Wrapper to import live worker only in subprocess."""
-        from live_mp_worker import live_proc_entrypoint
-        live_proc_entrypoint(args, q, stop_event)
-
     def _poll_live_queue(live_q, stop_evt):
         """Poll live queue in a thread and push segments to UI."""
         while not stop_evt.is_set():
@@ -628,11 +629,12 @@ def build_transcribe_page(page: ft.Page, state: AppState) -> ft.Control:
             "proxy_url": proxy_url,
         }
 
-        live_q = mp.Queue()
-        stop_evt = mp.Event()
+        ctx = mp.get_context("spawn")
+        live_q = ctx.Queue()
+        stop_evt = ctx.Event()
         state._live_stop_event = stop_evt
 
-        proc = mp.Process(target=_live_target, args=(args, live_q, stop_evt), daemon=True)
+        proc = ctx.Process(target=_live_target, args=(args, live_q, stop_evt), daemon=True)
         proc.start()
 
         threading.Thread(target=_poll_live_queue, args=(live_q, stop_evt), daemon=True).start()
