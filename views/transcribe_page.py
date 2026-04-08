@@ -504,6 +504,24 @@ def build_transcribe_page(page: ft.Page, state: AppState) -> ft.Control:
     )
 
     # ---- Live Mode -------------------------------------------------------
+    # Audio input device selector
+    def _get_input_devices():
+        try:
+            import sounddevice as sd
+            devices = sd.query_devices()
+            return [(i, d['name']) for i, d in enumerate(devices) if d['max_input_channels'] > 0]
+        except Exception:
+            return []
+
+    input_devices = _get_input_devices()
+    input_device_dropdown = ft.Dropdown(
+        label="Audio input",
+        width=250,
+        dense=True,
+        options=[ft.dropdown.Option(str(i), name) for i, name in input_devices],
+        value=str(input_devices[0][0]) if input_devices else None,
+    )
+
     live_output = ft.TextField(
         multiline=True,
         read_only=True,
@@ -523,7 +541,9 @@ def build_transcribe_page(page: ft.Page, state: AppState) -> ft.Control:
                         ft.Icon(ft.Icons.FIBER_MANUAL_RECORD, color="#FF453A", size=14),
                         ft.Text("Live Transcription", size=16, weight=ft.FontWeight.W_500),
                     ], spacing=6),
+                    input_device_dropdown,
                 ],
+                alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
             ),
             ft.Container(
                 content=live_output,
@@ -620,7 +640,7 @@ def build_transcribe_page(page: ft.Page, state: AppState) -> ft.Control:
             "device": "auto" if platform.system() == "Darwin" else "cpu",
             "compute_type": get_config('whisper_compute_type', 'int8'),
             "model_name_or_path": model_path,
-            "input_device_id": None,  # Default system mic
+            "input_device_id": input_device_dropdown.value,
             "language_code": language_code,
             "language_name": language_name,
             "vad_threshold": float(get_config('vad_threshold', 0.5)),
