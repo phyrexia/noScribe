@@ -124,64 +124,99 @@ def run_transcription(
 
         # ── 2. Speaker diarization (pyannote) ────────────────────────
         diarization = []
+        embeddings = {}
         if job.speaker_detection != 'none' and job.speaker_detection != 'off':
-            log_fn("Identifying speakers...", 'highlight')
-            job.status = JobStatus.SPEAKER_IDENTIFICATION
-
-            args = {
-                "device": 'cpu',
-                "audio_path": tmp_audio,
-                "num_speakers": (int(job.speaker_detection) if str(job.speaker_detection).isdigit() else None),
-                "ignore_ssl": True,
-                "proxy_url": get_config('proxy_url', ''),
-            }
-
-            ctx = mp.get_context("spawn")
-            q = ctx.Queue()
-            p = ctx.Process(target=_pyannote_target, args=(args, q))
-            p.start()
-
-            try:
-                while True:
-                    try:
-                        msg = q.get(timeout=0.2)
-                    except pyqueue.Empty:
-                        if cancel_check():
-                            p.terminate()
-                            raise Exception("Canceled by user")
-                        if not p.is_alive():
-                            raise Exception(f"Diarization worker exited (code {p.exitcode})")
-                        continue
-
-                    mtype = msg.get("type")
-                    if mtype == "log":
-                        lvl = msg.get("level", "info")
-                        log_fn(f"[pyannote] {msg.get('msg', '')}", 'error' if lvl == 'error' else 'info')
-                    elif mtype == "progress":
-                        pct = msg.get("pct", 0)
-                        progress_fn(5 + int(pct * 0.45))  # 5-50%
-                    elif mtype == "result":
-                        if msg.get("ok"):
-                            diarization = msg.get("segments", [])
-                            embeddings = msg.get("embeddings", {})
-                        else:
-                            err = msg.get("error", "Diarization failed")
-                            trace = msg.get("trace", "")
-                            log_fn(f"[pyannote] Error: {err}", 'error')
-                            if trace:
-                                log_fn(f"[pyannote] Traceback:\n{trace}", 'error')
-                            raise Exception(f"[PYANNOTE] {err}")
-                        break
-            finally:
+            # Check for cached diarization result (avoids re-processing on crash)
+            import json as _json
+            cache_path = os.path.splitext(job.transcript_file)[0] + "_diarization.json"
+            if os.path.exists(cache_path):
                 try:
-                    p.join(timeout=0.5)
+                    with open(cache_path, 'r', encoding='utf-8') as f:
+                        cached = _json.load(f)
+                    diarization = cached.get("segments", [])
+                    embeddings = cached.get("embeddings", {})
+                    if diarization:
+                        log_fn(f"Loaded cached diarization ({len(diarization)} segments)", 'highlight')
+                        progress_fn(50)
                 except Exception:
-                    pass
-                if p.is_alive():
-                    p.terminate()
+                    diarization = []
+                    embeddings = {}
+
+            if not diarization:
+                log_fn("Identifying speakers...", 'highlight')
+                job.status = JobStatus.SPEAKER_IDENTIFICATION
+
+                args = {
+                    "device": 'cpu',
+                    "audio_path": tmp_audio,
+                    "num_speakers": (int(job.speaker_detection) if str(job.speaker_detection).isdigit() else None),
+                    "ignore_ssl": True,
+                    "proxy_url": get_config('proxy_url', ''),
+                }
+
+                ctx = mp.get_context("spawn")
+                q = ctx.Queue()
+                p = ctx.Process(target=_pyannote_target, args=(args, q))
+                p.start()
+
+                try:
+                    while True:
+                        try:
+                            msg = q.get(timeout=0.2)
+                        except pyqueue.Empty:
+                            if cancel_check():
+                                p.terminate()
+                                raise Exception("Canceled by user")
+                            if not p.is_alive():
+                                raise Exception(f"Diarization worker exited (code {p.exitcode})")
+                            continue
+
+                        mtype = msg.get("type")
+                        if mtype == "log":
+                            lvl = msg.get("level", "info")
+                            log_fn(f"[pyannote] {msg.get('msg', '')}", 'error' if lvl == 'error' else 'info')
+                        elif mtype == "progress":
+                            pct = msg.get("pct", 0)
+                            progress_fn(5 + int(pct * 0.45))  # 5-50%
+                        elif mtype == "result":
+                            if msg.get("ok"):
+                                diarization = msg.get("segments", [])
+                                embeddings = msg.get("embeddings", {})
+                            else:
+                                err = msg.get("error", "Diarization failed")
+                                trace = msg.get("trace", "")
+                                log_fn(f"[pyannote] Error: {err}", 'error')
+                                if trace:
+                                    log_fn(f"[pyannote] Traceback:\n{trace}", 'error')
+                                raise Exception(f"[PYANNOTE] {err}")
+                            break
+                finally:
+                    try:
+                        p.join(timeout=0.5)
+                    except Exception:
+                        pass
+                    if p.is_alive():
+                        p.terminate()
 
             unique_speakers = sorted(set(s['label'] for s in diarization))
             log_fn(f"Found {len(unique_speakers)} speakers.", 'info')
+
+            # Cache pyannote result so we don't need to reprocess on crash
+            import json
+            cache_path = os.path.splitext(job.transcript_file)[0] + "_diarization.json"
+            try:
+                # Convert embeddings values to lists for JSON serialization
+                serializable_emb = {}
+                for k, v in embeddings.items():
+                    if hasattr(v, 'tolist'):
+                        serializable_emb[k] = v.tolist()
+                    elif isinstance(v, list):
+                        serializable_emb[k] = v
+                with open(cache_path, 'w', encoding='utf-8') as f:
+                    json.dump({"segments": diarization, "embeddings": serializable_emb}, f)
+                log_fn(f"Diarization cached: {os.path.basename(cache_path)}", 'info')
+            except Exception as ce:
+                log_fn(f"Cache save warning: {ce}", 'info')
 
             # Speaker naming — ask the user to assign names
             speaker_name_map = {}
