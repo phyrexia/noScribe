@@ -1,11 +1,28 @@
-#!/bin/bash
+#!/usr/bin/env bash
+# noScribe — Run script
+set -euo pipefail
 
-# Activar el entorno virtual si existe
-if [ -d "venv" ]; then
-    echo "Activando entorno virtual..."
-    source venv/bin/activate
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+cd "$SCRIPT_DIR"
+
+# ---------------------------------------------------------------------------
+# Check that install.sh has been run
+# ---------------------------------------------------------------------------
+if [ ! -d "venv" ]; then
+    echo "Virtual environment not found. Run ./install.sh first."
+    exit 1
 fi
 
-# Ejecutar noScribe
-echo "Iniciando noScribe..."
-python3 noScribe.py
+if [ ! -d "models/fast" ] || [ ! -f "models/fast/model.bin" ]; then
+    echo "Whisper models not found. Run ./install.sh first."
+    exit 1
+fi
+
+# ---------------------------------------------------------------------------
+# Activate venv and run
+# ---------------------------------------------------------------------------
+# shellcheck disable=SC1091
+source venv/bin/activate
+
+echo "Starting noScribe..."
+python3 noScribe.py "$@"

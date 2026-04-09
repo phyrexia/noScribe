@@ -4,8 +4,7 @@ dist/
 src/
 __pycache__/
 .vscode/
-noScribeEdit/*
-!noScribeEdit/readme.txt
+noScribeEdit/
 # scripts/ tracked in MeetingGenie branch
 
 *.code-workspace
@@ -18,10 +17,7 @@ ROADMAP.md
 whisper_test.py
 codex*.*
 
-models/precise/*
-!models/precise/NOSCRIBE_README.txt
-models/fast/*
-!models/fast/NOSCRIBE_README.txt
+models/
 
 .DS_Store
 stuff/
@@ -50,5 +46,5 @@ venv/
 debug_live.py
 test_live2.py
 
-# Downloaded models (large binaries)
-models/faster-whisper-*/
+# install.sh / run.sh generated
+install.log
