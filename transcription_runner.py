@@ -88,8 +88,10 @@ def run_transcription(
 
     try:
         job.set_running()
+        timings = {}
 
         # ── 1. Audio conversion (ffmpeg) ─────────────────────────────
+        t_step = time.time()
         log_fn("Converting audio...", 'highlight')
 
         end_pos = f'-t {int(job.stop) - int(job.start)}ms' if int(job.stop) > 0 else ''
@@ -119,10 +121,12 @@ def run_transcription(
         if proc.returncode and proc.returncode > 0:
             raise Exception("FFmpeg conversion failed")
 
-        log_fn("Audio conversion complete.", 'info')
+        timings['audio_conversion'] = time.time() - t_step
+        log_fn(f"Audio conversion complete. ({timings['audio_conversion']:.0f}s)", 'info')
         progress_fn(5)
 
         # ── 2. Speaker diarization (pyannote) ────────────────────────
+        t_step = time.time()
         diarization = []
         embeddings = {}
         if job.speaker_detection != 'none' and job.speaker_detection != 'off':
@@ -262,11 +266,14 @@ def run_transcription(
                 except Exception as e:
                     log_fn(f"Speaker naming error: {e}", 'info')
 
+            timings['diarization'] = time.time() - t_step
+            log_fn(f"Diarization complete. ({timings['diarization']:.0f}s)", 'info')
             progress_fn(50)
         else:
             progress_fn(50)
 
         # ── 3. Transcription (whisper) ───────────────────────────────
+        t_step = time.time()
         log_fn("Transcribing...", 'highlight')
         job.status = JobStatus.TRANSCRIPTION
 
@@ -362,6 +369,8 @@ def run_transcription(
             if p.is_alive():
                 p.terminate()
 
+        timings['transcription'] = time.time() - t_step
+        log_fn(f"Transcription complete. ({timings['transcription']:.0f}s)", 'info')
         progress_fn(95)
 
         # ── 4. Save output ───────────────────────────────────────────
@@ -432,8 +441,16 @@ def run_transcription(
 
         duration = job.get_duration()
         if duration:
-            secs = int(duration.total_seconds())
-            log_fn(f"Completed in {secs // 60}:{secs % 60:02d}", 'info')
+            total_secs = int(duration.total_seconds())
+            total_str = f"{total_secs // 60}:{total_secs % 60:02d}"
+            breakdown = []
+            for step, label in [('audio_conversion', 'Audio'), ('diarization', 'Speakers'), ('transcription', 'Whisper')]:
+                if step in timings:
+                    s = int(timings[step])
+                    breakdown.append(f"{label}: {s // 60}:{s % 60:02d}")
+            log_fn(f"━━━ Completed in {total_str} ━━━", 'highlight')
+            if breakdown:
+                log_fn(f"  {' | '.join(breakdown)}", 'info')
 
     except Exception as e:
         msg = str(e)
