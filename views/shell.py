@@ -48,6 +48,23 @@ def build_shell(page: ft.Page, state: AppState, pages: dict[str, ft.Control]):
                             weight=ft.FontWeight.BOLD,
                             color=BRAND_BLUE,
                         ),
+                        ft.Container(
+                            content=ft.Row([
+                                ft.Icon(
+                                    ft.Icons.MEMORY if state.compute_device in ("metal", "cuda") else ft.Icons.COMPUTER,
+                                    size=14,
+                                    color="#4CAF50" if state.compute_device in ("metal", "cuda") else ft.Colors.ON_SURFACE_VARIANT,
+                                ),
+                                ft.Text(
+                                    state.get_device_label(),
+                                    size=11,
+                                    color="#4CAF50" if state.compute_device in ("metal", "cuda") else ft.Colors.ON_SURFACE_VARIANT,
+                                ),
+                            ], spacing=4, tight=True),
+                            border=ft.border.all(1, "#4CAF50" if state.compute_device in ("metal", "cuda") else ft.Colors.OUTLINE_VARIANT),
+                            border_radius=12,
+                            padding=ft.padding.symmetric(horizontal=8, vertical=3),
+                        ),
                     ],
                     spacing=8,
                 ),

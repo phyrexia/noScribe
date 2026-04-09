@@ -39,6 +39,31 @@ class AppState:
         # Last generated summary
         self.last_summary_path: str = ""
 
+        # Compute device indicator (updated by workers)
+        self.compute_device: str = self._detect_device()
+
+    def _detect_device(self) -> str:
+        """Detect available compute device without importing torch."""
+        import platform
+        if platform.system() == "Darwin" and platform.machine() == "arm64":
+            return "metal"
+        # Can't check CUDA without importing torch, default to cpu
+        return "cpu"
+
+    def get_device_label(self) -> str:
+        d = self.compute_device
+        if d == "metal":
+            return "Metal GPU"
+        elif d == "cuda":
+            return "NVIDIA GPU"
+        return "CPU"
+
+    def get_device_icon_name(self) -> str:
+        d = self.compute_device
+        if d in ("metal", "cuda"):
+            return "memory"  # chip icon
+        return "computer"
+
     def get_language_names(self) -> list[str]:
         return list(self.languages.keys())
 
