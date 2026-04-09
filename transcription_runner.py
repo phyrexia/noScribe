@@ -146,8 +146,9 @@ def run_transcription(
                 log_fn("Identifying speakers...", 'highlight')
                 job.status = JobStatus.SPEAKER_IDENTIFICATION
 
+                force_pyannote_cpu = get_config('force_pyannote_cpu', '').lower() == 'true'
                 args = {
-                    "device": 'cpu',
+                    "device": 'cpu' if force_pyannote_cpu else '',  # '' = auto-detect MPS/CUDA
                     "audio_path": tmp_audio,
                     "num_speakers": (int(job.speaker_detection) if str(job.speaker_detection).isdigit() else None),
                     "ignore_ssl": True,
