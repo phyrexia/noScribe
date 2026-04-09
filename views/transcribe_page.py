@@ -315,7 +315,7 @@ def build_transcribe_page(page: ft.Page, state: AppState) -> ft.Control:
 
     def on_start_click(e):
         if not state.audio_files:
-            page.open(ft.SnackBar(ft.Text("Please select an audio file first.")))
+            page.show_dialog(ft.SnackBar(ft.Text("Please select an audio file first.")))
             return
         try:
             job = _build_job()
@@ -340,7 +340,7 @@ def build_transcribe_page(page: ft.Page, state: AppState) -> ft.Control:
 
     def on_queue_click(e):
         if not state.audio_files:
-            page.open(ft.SnackBar(ft.Text("Please select an audio file first.")))
+            page.show_dialog(ft.SnackBar(ft.Text("Please select an audio file first.")))
             return
         append_log("Job added to queue.", BRAND_BLUE)
 

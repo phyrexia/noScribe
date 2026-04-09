@@ -31,7 +31,7 @@ def build_settings_page(page: ft.Page, state: AppState) -> ft.Control:
         set_config('whisper_beam_size', int(beam_field.value or 1))
         set_config('auto_save', 'True' if autosave_cb.value else 'False')
         save_config()
-        page.open(ft.SnackBar(ft.Text("Settings saved.")))
+        page.show_dialog(ft.SnackBar(ft.Text("Settings saved.")))
 
     def _reset_prompt(e):
         prompt_field.value = DEFAULT_SUMMARY_PROMPT
@@ -125,7 +125,7 @@ def build_settings_page(page: ft.Page, state: AppState) -> ft.Control:
                 if new_name and new_name != name:
                     import speaker_db
                     speaker_db.rename_speaker(name, new_name)
-                    page.open(ft.SnackBar(ft.Text(f"Renamed: {name} → {new_name}")))
+                    page.show_dialog(ft.SnackBar(ft.Text(f"Renamed: {name} → {new_name}")))
                     _list_speakers()
                 else:
                     name_field.read_only = True
@@ -134,7 +134,7 @@ def build_settings_page(page: ft.Page, state: AppState) -> ft.Control:
         def _on_delete(e):
             import speaker_db
             speaker_db.delete_speaker(name)
-            page.open(ft.SnackBar(ft.Text(f"Deleted: {name}")))
+            page.show_dialog(ft.SnackBar(ft.Text(f"Deleted: {name}")))
             _list_speakers()
 
         def _on_merge(e):
@@ -142,7 +142,7 @@ def build_settings_page(page: ft.Page, state: AppState) -> ft.Control:
             import speaker_db
             others = [n for n in speaker_db.list_speakers() if n.lower() != name.lower()]
             if not others:
-                page.open(ft.SnackBar(ft.Text("No other speakers to merge with.")))
+                page.show_dialog(ft.SnackBar(ft.Text("No other speakers to merge with.")))
                 return
 
             merge_dropdown = ft.Dropdown(
@@ -156,8 +156,8 @@ def build_settings_page(page: ft.Page, state: AppState) -> ft.Control:
                 if target:
                     sim = speaker_db.get_similarity(name, target)
                     speaker_db.merge_speakers(name, target)
-                    page.close(merge_dlg)
-                    page.open(ft.SnackBar(
+                    page.pop_dialog()
+                    page.show_dialog(ft.SnackBar(
                         ft.Text(f"Merged {target} into {name} (similarity: {int(sim*100)}%)")
                     ))
                     _list_speakers()
@@ -170,11 +170,11 @@ def build_settings_page(page: ft.Page, state: AppState) -> ft.Control:
                     merge_dropdown,
                 ], tight=True, width=300),
                 actions=[
-                    ft.TextButton("Cancel", on_click=lambda e: page.close(merge_dlg)),
+                    ft.TextButton("Cancel", on_click=lambda e: page.pop_dialog()),
                     ft.ElevatedButton("Merge", on_click=_do_merge, bgcolor="#FF9800", color=ft.Colors.WHITE),
                 ],
             )
-            page.open(merge_dlg)
+            page.show_dialog(merge_dlg)
 
         return ft.Container(
             content=ft.Row([
