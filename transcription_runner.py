@@ -219,8 +219,12 @@ def run_transcription(
                     result = speaker_naming_fn(speakers_data, tmp_audio)
                     if result:
                         speaker_name_map = result
+                        named = [f"{v} ({k})" for k, v in result.items()]
+                        log_fn(f"Speakers identified: {', '.join(named)}", 'highlight')
+                    else:
+                        log_fn("Speaker naming skipped — using S01, S02...", 'info')
                 except Exception as e:
-                    log_fn(f"Speaker naming skipped: {e}", 'info')
+                    log_fn(f"Speaker naming error: {e}", 'info')
 
             progress_fn(50)
         else:
