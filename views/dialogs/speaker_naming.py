@@ -105,43 +105,31 @@ class SpeakerNamingBridge:
             matched = spk.get('matched_name', '')
             sim = spk.get('similarity', 0.0)
 
-            # Pre-fill: matched name if good confidence, else short label
             default_name = matched if matched and sim > 0.7 else short
-            # Auto-check save if it's a new speaker (no match)
             auto_save = bool(matched and sim > 0.7)
 
-            name_field = ft.TextField(
-                value=default_name,
-                label=short,
-                width=180,
-                dense=True,
-            )
+            name_field = ft.TextField(value=default_name, label=short, width=150, dense=True)
             name_fields[lbl] = name_field
 
-            # Confidence badge
+            save_cb = ft.Checkbox(value=auto_save, tooltip="Save voice")
+            save_checkboxes[lbl] = save_cb
+
+            # Match badge (compact)
             if matched and sim > 0:
                 pct = int(sim * 100)
                 badge_color = "#4CAF50" if sim > 0.8 else "#FF9800" if sim > 0.6 else "#9E9E9E"
-                confidence = ft.Container(
-                    content=ft.Text(f"{matched} ({pct}%)", size=11, color=ft.Colors.WHITE),
-                    bgcolor=badge_color,
-                    border_radius=10,
-                    padding=ft.padding.symmetric(horizontal=8, vertical=2),
-                )
+                badge = ft.Text(f"{pct}%", size=10, color=ft.Colors.WHITE,
+                                bgcolor=badge_color, weight=ft.FontWeight.BOLD)
             else:
-                confidence = ft.Container(width=0)
+                badge = ft.Container(width=0)
 
-            save_cb = ft.Checkbox(label="Save", value=auto_save, tooltip="Save voice signature")
-            save_checkboxes[lbl] = save_cb
-
-            # Audio sample play buttons
+            # Play buttons (icon only, compact)
             samples = spk.get('samples', [])
-            play_buttons = []
+            play_btns = []
             for idx, sample in enumerate(samples[:2]):
                 s_start = sample.get('start', 0)
                 s_end = sample.get('end', 0)
                 dur = round((s_end - s_start) / 1000, 1)
-                ts_label = _ms_to_ts(s_start)
 
                 def _make_play(st=s_start, en=s_end):
                     def _play(e):
@@ -152,36 +140,22 @@ class SpeakerNamingBridge:
                         ).start()
                     return _play
 
-                play_buttons.append(
-                    ft.TextButton(
-                        content=ft.Row([
-                            ft.Icon(ft.Icons.PLAY_ARROW, size=16),
-                            ft.Text(f"{ts_label} ({dur}s)", size=11),
-                        ], spacing=2, tight=True),
+                play_btns.append(
+                    ft.IconButton(
+                        icon=ft.Icons.PLAY_ARROW,
+                        icon_size=18,
+                        tooltip=f"{_ms_to_ts(s_start)} ({dur}s)",
                         on_click=_make_play(),
+                        style=ft.ButtonStyle(padding=ft.padding.all(4)),
                     )
                 )
 
-            # Compact card: top row = name + save, bottom row = play + confidence
-            top_row = ft.Row([name_field, save_cb], spacing=8)
-            bottom_items = []
-            if play_buttons:
-                bottom_items.extend(play_buttons)
-            if matched and sim > 0:
-                bottom_items.append(confidence)
-            bottom_row = ft.Row(bottom_items, spacing=4, wrap=True) if bottom_items else ft.Container(height=0)
-
-            rows.append(
-                ft.Container(
-                    content=ft.Column([top_row, bottom_row], spacing=4, tight=True),
-                    padding=ft.padding.symmetric(horizontal=10, vertical=6),
-                    border=ft.border.all(1, ft.Colors.OUTLINE_VARIANT),
-                    border_radius=8,
-                )
-            )
-
-        # Status text for feedback
-        status_text = ft.Text("", size=12, color="#4CAF50")
+            # Single row: [Name] [▶][▶] [98%] [☑]
+            row_items = [name_field]
+            row_items.extend(play_btns)
+            row_items.append(badge)
+            row_items.append(save_cb)
+            rows.append(ft.Row(row_items, spacing=2))
 
         def _on_ok(e):
             result = {}
@@ -216,19 +190,14 @@ class SpeakerNamingBridge:
             title=ft.Text(f"Identify {n_speakers} Speakers"),
             content=ft.Column(
                 [
-                    ft.Text(
-                        "Assign names to each speaker. Use the play buttons to hear samples.\n"
-                        "Check 'Save' to remember voice signatures for future transcriptions.\n"
-                        "Take your time — transcription will wait for you.",
-                        size=13,
-                    ),
-                    ft.Divider(height=8),
+                    ft.Text("▶ = play sample  |  % = voice match  |  ☑ = save signature", size=11,
+                            color=ft.Colors.ON_SURFACE_VARIANT),
+                    ft.Divider(height=4),
                     *rows,
-                    status_text,
                 ],
                 tight=True,
-                spacing=10,
-                width=420,
+                spacing=6,
+                width=380,
                 scroll=ft.ScrollMode.AUTO,
             ),
             actions=[
