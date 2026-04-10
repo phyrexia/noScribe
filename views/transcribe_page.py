@@ -302,14 +302,21 @@ def build_transcribe_page(page: ft.Page, state: AppState) -> ft.Control:
                 cancel_check=lambda: state.cancel,
                 speaker_naming_fn=speaker_naming_fn,
             )
+            # Notify editor to open transcript
+            if job.transcript_file and os.path.exists(job.transcript_file):
+                state.bus.publish(EventType.JOB_FINISHED, {
+                    "transcript_path": job.transcript_file
+                })
         finally:
             try:
                 progress_bar.visible = False
                 progress_bar.update()
                 stop_btn.visible = False
                 start_btn.disabled = False
+                summarize_btn.disabled = False
                 start_btn.update()
                 stop_btn.update()
+                summarize_btn.update()
             except Exception:
                 pass
 
@@ -370,9 +377,12 @@ def build_transcribe_page(page: ft.Page, state: AppState) -> ft.Control:
     )
 
     def on_summarize_click(e):
-        key = anthropic_key.value.strip()
+        key = (anthropic_key.value or "").strip()
         if not key:
-            append_log("Please enter your Anthropic API Key first.", "#FF453A")
+            # Fallback to config
+            key = (state.get_config('anthropic_api_key', '') or "").strip()
+        if not key:
+            append_log("Please enter your Anthropic API Key in Settings or in the field below.", "#FF453A")
             return
         # Save key to config
         state.set_config('anthropic_api_key', key)
