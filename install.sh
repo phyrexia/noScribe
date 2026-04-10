@@ -232,6 +232,12 @@ download_model() {
         return
     fi
 
+    # Clean up incomplete previous download
+    if [ -d "$dest" ]; then
+        warn "Removing incomplete model directory: $dest"
+        rm -rf "$dest"
+    fi
+
     info "Downloading model '$name' from HuggingFace ($repo)..."
     info "  This may take several minutes depending on your connection."
 
