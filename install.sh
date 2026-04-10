@@ -263,9 +263,15 @@ echo ""
 download_model "fast" "mukowaty/faster-whisper-int8"
 
 read -r -p "$(printf '\033[1;34m[INFO]\033[0m  Download the precise model too? (~1.5 GB) [y/N]: ')" REPLY
-if [[ "${REPLY,,}" =~ ^y ]]; then
+REPLY_LOWER="$(echo "$REPLY" | tr '[:upper:]' '[:lower:]')"
+if [ "$REPLY_LOWER" = "y" ] || [ "$REPLY_LOWER" = "yes" ]; then
     download_model "precise" "mobiuslabsgmbh/faster-whisper-large-v3-turbo"
 fi
+
+# ---------------------------------------------------------------------------
+# 6. Ensure scripts are executable
+# ---------------------------------------------------------------------------
+chmod +x "$SCRIPT_DIR/run.sh" "$SCRIPT_DIR/install.sh" 2>/dev/null || true
 
 # ---------------------------------------------------------------------------
 # Done
