@@ -162,12 +162,23 @@ class SpeakerNamingBridge:
                     )
                 )
 
-            row_controls = [name_field]
+            # Compact card: top row = name + save, bottom row = play + confidence
+            top_row = ft.Row([name_field, save_cb], spacing=8)
+            bottom_items = []
             if play_buttons:
-                row_controls.append(ft.Row(play_buttons, spacing=2))
-            row_controls.append(confidence)
-            row_controls.append(save_cb)
-            rows.append(ft.Row(row_controls, spacing=6))
+                bottom_items.extend(play_buttons)
+            if matched and sim > 0:
+                bottom_items.append(confidence)
+            bottom_row = ft.Row(bottom_items, spacing=4, wrap=True) if bottom_items else ft.Container(height=0)
+
+            rows.append(
+                ft.Container(
+                    content=ft.Column([top_row, bottom_row], spacing=4, tight=True),
+                    padding=ft.padding.symmetric(horizontal=10, vertical=6),
+                    border=ft.border.all(1, ft.Colors.OUTLINE_VARIANT),
+                    border_radius=8,
+                )
+            )
 
         # Status text for feedback
         status_text = ft.Text("", size=12, color="#4CAF50")
@@ -217,7 +228,7 @@ class SpeakerNamingBridge:
                 ],
                 tight=True,
                 spacing=10,
-                width=550,
+                width=420,
                 scroll=ft.ScrollMode.AUTO,
             ),
             actions=[
