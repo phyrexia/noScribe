@@ -108,7 +108,7 @@ class SpeakerNamingBridge:
             default_name = matched if matched and sim > 0.7 else short
             auto_save = bool(matched and sim > 0.7)
 
-            name_field = ft.TextField(value=default_name, label=short, width=150, dense=True)
+            name_field = ft.TextField(value=default_name, label=short, width=220, dense=True)
             name_fields[lbl] = name_field
 
             save_cb = ft.Checkbox(value=auto_save, tooltip="Save voice")
@@ -197,7 +197,7 @@ class SpeakerNamingBridge:
                 ],
                 tight=True,
                 spacing=6,
-                width=380,
+                width=480,
                 scroll=ft.ScrollMode.AUTO,
             ),
             actions=[
