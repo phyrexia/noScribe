@@ -18,20 +18,35 @@ warn()  { printf '\033[1;33m[WARN]\033[0m  %s\n' "$*"; }
 fail()  { printf '\033[1;31m[ERROR]\033[0m %s\n' "$*"; exit 1; }
 
 # ---------------------------------------------------------------------------
-# Package manager detection
+# Package manager detection & installer
 # ---------------------------------------------------------------------------
 OS="$(uname -s)"
+
+ensure_brew() {
+    if command -v brew >/dev/null 2>&1; then
+        return 0
+    fi
+    info "Homebrew not found. Installing Homebrew first..."
+    /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+    # Add brew to PATH for this session (Apple Silicon vs Intel path)
+    if [ -f /opt/homebrew/bin/brew ]; then
+        eval "$(/opt/homebrew/bin/brew shellenv)"
+    elif [ -f /usr/local/bin/brew ]; then
+        eval "$(/usr/local/bin/brew shellenv)"
+    fi
+    if ! command -v brew >/dev/null 2>&1; then
+        fail "Homebrew installation failed. Install manually: https://brew.sh"
+    fi
+    ok "Homebrew installed"
+}
 
 install_pkg() {
     local pkg="$1"
     info "Attempting to install $pkg..."
     case "$OS" in
         Darwin)
-            if command -v brew >/dev/null 2>&1; then
-                brew install "$pkg"
-            else
-                fail "$pkg not found and Homebrew is not installed. Install Homebrew first: https://brew.sh"
-            fi
+            ensure_brew
+            brew install "$pkg"
             ;;
         Linux)
             if command -v apt-get >/dev/null 2>&1; then
@@ -63,28 +78,47 @@ fi
 ok "git: $(git --version)"
 
 # --- Python 3 ---
-if ! command -v "$PYTHON" >/dev/null 2>&1; then
-    warn "Python 3 not found."
+find_python() {
+    # Try common Python binary names in order of preference
+    for cmd in python3.12 python3.13 python3.11 python3 python; do
+        if command -v "$cmd" >/dev/null 2>&1; then
+            local ver
+            ver=$("$cmd" -c 'import sys; print(sys.version_info.minor)' 2>/dev/null) || continue
+            local maj
+            maj=$("$cmd" -c 'import sys; print(sys.version_info.major)' 2>/dev/null) || continue
+            if [ "$maj" -eq 3 ] && [ "$ver" -ge 11 ]; then
+                PYTHON="$cmd"
+                return 0
+            fi
+        fi
+    done
+    return 1
+}
+
+if ! find_python; then
+    warn "Python >= 3.11 not found. Installing..."
     case "$OS" in
         Darwin) install_pkg python@3.12 ;;
         Linux)  install_pkg python3 ;;
     esac
-    # Refresh path
     hash -r 2>/dev/null || true
-fi
-
-if ! command -v "$PYTHON" >/dev/null 2>&1; then
-    fail "Python 3 still not found after install attempt. Install Python 3.12+ manually."
+    # After brew install, the binary may be python3.12 not python3
+    if ! find_python; then
+        fail "Python >= 3.11 still not found after install. Install Python 3.12+ manually."
+    fi
 fi
 
 PY_VERSION=$("$PYTHON" -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")')
-PY_MAJOR=$("$PYTHON" -c 'import sys; print(sys.version_info.major)')
-PY_MINOR=$("$PYTHON" -c 'import sys; print(sys.version_info.minor)')
+ok "Python $PY_VERSION ($(command -v "$PYTHON"))"
 
-if [ "$PY_MAJOR" -lt 3 ] || { [ "$PY_MAJOR" -eq 3 ] && [ "$PY_MINOR" -lt 11 ]; }; then
-    fail "Python >= 3.11 required (found $PY_VERSION). Upgrade manually."
+# --- pip (some distros don't include it) ---
+if ! "$PYTHON" -m pip --version >/dev/null 2>&1; then
+    warn "pip not found."
+    case "$OS" in
+        Darwin) "$PYTHON" -m ensurepip --upgrade 2>/dev/null || install_pkg python@3.12 ;;
+        Linux)  install_pkg python3-pip ;;
+    esac
 fi
-ok "Python $PY_VERSION"
 
 # --- python3-venv (Linux often needs it separately) ---
 if [ "$OS" = "Linux" ]; then
