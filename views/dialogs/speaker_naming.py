@@ -141,12 +141,14 @@ class SpeakerNamingBridge:
                     return _play
 
                 play_btns.append(
-                    ft.IconButton(
-                        icon=ft.Icons.PLAY_ARROW,
-                        icon_size=18,
-                        tooltip=f"{_ms_to_ts(s_start)} ({dur}s)",
+                    ft.TextButton(
+                        content=ft.Row([
+                            ft.Icon(ft.Icons.PLAY_ARROW, size=14),
+                            ft.Text(f"{_ms_to_ts(s_start)}", size=10),
+                        ], spacing=1, tight=True),
+                        tooltip=f"Play {dur}s sample",
                         on_click=_make_play(),
-                        style=ft.ButtonStyle(padding=ft.padding.all(4)),
+                        style=ft.ButtonStyle(padding=ft.padding.symmetric(horizontal=4, vertical=2)),
                     )
                 )
 
