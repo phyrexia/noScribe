@@ -633,7 +633,12 @@ def build_transcribe_page(page: ft.Page, state: AppState) -> ft.Control:
         live_btn.update()
 
         # Show live panel, hide log
-        live_output.value = "Listening for audio...\n\n"
+        device_name = "default"
+        for i, name in input_devices:
+            if str(i) == str(input_device_dropdown.value):
+                device_name = name
+                break
+        live_output.value = f"Starting live transcription...\nDevice: {device_name}\nLoading models (this may take a moment)...\n\n"
         live_col.visible = True
         log_col.visible = False
         right_panel.update()
