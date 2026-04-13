@@ -481,6 +481,8 @@ def build_transcribe_page(page: ft.Page, state: AppState) -> ft.Control:
             timestamps_cb,
             ft.Divider(height=8, color=ft.Colors.TRANSPARENT),
             anthropic_key,
+            ft.Divider(height=8, color=ft.Colors.TRANSPARENT),
+            input_device_dropdown,
             ft.Divider(height=12, color=ft.Colors.TRANSPARENT),
             start_btn,
             queue_btn,
@@ -525,8 +527,8 @@ def build_transcribe_page(page: ft.Page, state: AppState) -> ft.Control:
 
     input_devices = _get_input_devices()
     input_device_dropdown = ft.Dropdown(
-        label="Audio input",
-        width=250,
+        label="Audio input (Live Mode)",
+        width=280,
         dense=True,
         options=[ft.dropdown.Option(str(i), name) for i, name in input_devices],
         value=str(input_devices[0][0]) if input_devices else None,
@@ -551,9 +553,7 @@ def build_transcribe_page(page: ft.Page, state: AppState) -> ft.Control:
                         ft.Icon(ft.Icons.FIBER_MANUAL_RECORD, color="#FF453A", size=14),
                         ft.Text("Live Transcription", size=16, weight=ft.FontWeight.W_500),
                     ], spacing=6),
-                    input_device_dropdown,
                 ],
-                alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
             ),
             ft.Container(
                 content=live_output,
@@ -573,12 +573,17 @@ def build_transcribe_page(page: ft.Page, state: AppState) -> ft.Control:
         expand=True,
     )
 
-    def _poll_live_queue(live_q, stop_evt):
+    def _poll_live_queue(live_q, stop_evt, proc):
         """Poll live queue in a thread and push segments to UI."""
         while not stop_evt.is_set():
             try:
-                msg = live_q.get(timeout=0.3)
+                msg = live_q.get(timeout=0.5)
             except pyqueue.Empty:
+                # Check if process died
+                if not proc.is_alive():
+                    exitcode = proc.exitcode
+                    append_log(f"[Live] Worker exited unexpectedly (code {exitcode})", "#FF453A")
+                    break
                 continue
             except Exception:
                 break
@@ -592,7 +597,14 @@ def build_transcribe_page(page: ft.Page, state: AppState) -> ft.Control:
                 except Exception:
                     pass
             elif mtype == "log":
-                append_log(f"[Live] {msg.get('msg', '')}", None)
+                lvl = msg.get("level", "info")
+                color = "#FF453A" if lvl == "error" else None
+                try:
+                    live_output.value = (live_output.value or "") + f"[{lvl}] {msg.get('msg', '')}\n"
+                    live_output.update()
+                except Exception:
+                    pass
+                append_log(f"[Live] {msg.get('msg', '')}", color)
             elif mtype == "live_finished":
                 break
 
@@ -666,9 +678,9 @@ def build_transcribe_page(page: ft.Page, state: AppState) -> ft.Control:
 
         proc = ctx.Process(target=_live_target, args=(args, live_q, stop_evt), daemon=True)
         proc.start()
+        append_log(f"Live worker started (device: {input_device_dropdown.value})", BRAND_BLUE)
 
-        threading.Thread(target=_poll_live_queue, args=(live_q, stop_evt), daemon=True).start()
-        append_log("Live transcription started.", BRAND_BLUE)
+        threading.Thread(target=_poll_live_queue, args=(live_q, stop_evt, proc), daemon=True).start()
 
     live_btn = ft.ElevatedButton(
         "Live Mode",
