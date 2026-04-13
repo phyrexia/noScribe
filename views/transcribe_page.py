@@ -156,8 +156,8 @@ def build_transcribe_page(page: ft.Page, state: AppState) -> ft.Control:
 
     input_devices = _get_input_devices()
     input_device_dropdown = ft.Dropdown(
-        label="Audio input (Live Mode)",
-        width=280,
+        label="Audio input",
+        width=220,
         dense=True,
         options=[ft.dropdown.Option(str(i), name) for i, name in input_devices],
         value=str(input_devices[0][0]) if input_devices else None,
@@ -499,8 +499,6 @@ def build_transcribe_page(page: ft.Page, state: AppState) -> ft.Control:
             timestamps_cb,
             ft.Divider(height=8, color=ft.Colors.TRANSPARENT),
             anthropic_key,
-            ft.Divider(height=8, color=ft.Colors.TRANSPARENT),
-            input_device_dropdown,
             ft.Divider(height=12, color=ft.Colors.TRANSPARENT),
             start_btn,
             queue_btn,
@@ -696,6 +694,7 @@ def build_transcribe_page(page: ft.Page, state: AppState) -> ft.Control:
     )
     # Expose to shell header
     state.live_btn = live_btn
+    state.input_device_dropdown = input_device_dropdown
 
     return ft.Container(
         content=ft.Row(
