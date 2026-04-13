@@ -145,6 +145,24 @@ def build_transcribe_page(page: ft.Page, state: AppState) -> ft.Control:
         on_select=on_filetype_change,
     )
 
+    # Audio input devices for Live Mode
+    def _get_input_devices():
+        try:
+            import sounddevice as sd
+            devices = sd.query_devices()
+            return [(i, d['name']) for i, d in enumerate(devices) if d['max_input_channels'] > 0]
+        except Exception:
+            return []
+
+    input_devices = _get_input_devices()
+    input_device_dropdown = ft.Dropdown(
+        label="Audio input (Live Mode)",
+        width=280,
+        dense=True,
+        options=[ft.dropdown.Option(str(i), name) for i, name in input_devices],
+        value=str(input_devices[0][0]) if input_devices else None,
+    )
+
     overlapping_cb = ft.Checkbox(label="Overlapping speech", value=True)
     timestamps_cb = ft.Checkbox(label="Timestamps", value=False)
     disfluencies_cb = ft.Checkbox(label="Disfluencies", value=True)
@@ -516,24 +534,6 @@ def build_transcribe_page(page: ft.Page, state: AppState) -> ft.Control:
     )
 
     # ---- Live Mode -------------------------------------------------------
-    # Audio input device selector
-    def _get_input_devices():
-        try:
-            import sounddevice as sd
-            devices = sd.query_devices()
-            return [(i, d['name']) for i, d in enumerate(devices) if d['max_input_channels'] > 0]
-        except Exception:
-            return []
-
-    input_devices = _get_input_devices()
-    input_device_dropdown = ft.Dropdown(
-        label="Audio input (Live Mode)",
-        width=280,
-        dense=True,
-        options=[ft.dropdown.Option(str(i), name) for i, name in input_devices],
-        value=str(input_devices[0][0]) if input_devices else None,
-    )
-
     live_output = ft.TextField(
         multiline=True,
         read_only=True,
