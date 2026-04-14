@@ -609,6 +609,7 @@ def build_transcribe_page(page: ft.Page, state: AppState) -> ft.Control:
         state.live_process_running = False
         try:
             live_btn.text = "Live Mode"
+            live_btn.icon = ft.Icons.MIC
             live_btn.bgcolor = "#D84315"
             live_btn.update()
             live_col.visible = False
@@ -626,7 +627,8 @@ def build_transcribe_page(page: ft.Page, state: AppState) -> ft.Control:
 
         # Start
         state.live_process_running = True
-        live_btn.text = "Stop Live"
+        live_btn.text = "⏹ Stop Live"
+        live_btn.icon = ft.Icons.STOP
         live_btn.bgcolor = "#C62828"
         live_btn.update()
 
@@ -641,9 +643,13 @@ def build_transcribe_page(page: ft.Page, state: AppState) -> ft.Control:
         log_col.visible = False
         right_panel.update()
 
-        # Prepare args
-        sel_model = model_dropdown.value or "fast"
+        # Live always uses fast model for speed
+        sel_model = "fast"
         model_path = model_manager.get_model_path_for_app(sel_model) or sel_model
+        if not model_path or not os.path.exists(str(model_path)):
+            # Fallback to whatever is available
+            sel_model = model_dropdown.value or "fast"
+            model_path = model_manager.get_model_path_for_app(sel_model) or sel_model
 
         language_name = language_dropdown.value or "Auto"
         language_code = None
