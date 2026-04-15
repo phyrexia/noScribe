@@ -13,8 +13,15 @@ if [ ! -d "venv" ]; then
     exit 1
 fi
 
-if [ ! -d "models/fast" ] || [ ! -f "models/fast/model.bin" ]; then
-    echo "Whisper models not found. Run ./install.sh first."
+HAS_MODEL=false
+for m in models/small models/fast models/precise; do
+    if [ -f "$m/model.bin" ]; then
+        HAS_MODEL=true
+        break
+    fi
+done
+if [ "$HAS_MODEL" = false ]; then
+    echo "No Whisper models found. Run ./install.sh first."
     exit 1
 fi
 

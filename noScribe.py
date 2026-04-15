@@ -1997,7 +1997,7 @@ class App(ctk.CTk):
                         self.whisper_model_paths[entry] = entry_path
 
         # On-demand models (downloaded by model_manager into user data dir)
-        for quality in ('fast', 'precise'):
+        for quality in ('small', 'fast', 'precise'):
             if model_manager.model_is_ready(quality):
                 path = model_manager.get_model_path_for_app(quality)
                 if path:

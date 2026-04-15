@@ -212,8 +212,11 @@ else
 fi
 
 # ---------------------------------------------------------------------------
-# 5. Download Whisper models
+# 5. Download Whisper models from GitHub Releases
 # ---------------------------------------------------------------------------
+GH_REPO="phyrexia/noScribe"
+GH_TAG="models-v1"
+GH_ASSET_URL="https://github.com/${GH_REPO}/releases/download/${GH_TAG}"
 MODELS_DIR="models"
 
 if [ -L "$MODELS_DIR" ]; then
@@ -224,7 +227,7 @@ mkdir -p "$MODELS_DIR"
 
 download_model() {
     local name="$1"
-    local repo="$2"
+    local asset="${name}.tar.gz"
     local dest="$MODELS_DIR/$name"
 
     if [ -d "$dest" ] && [ -f "$dest/model.bin" ]; then
@@ -237,41 +240,57 @@ download_model() {
         warn "Removing incomplete model directory: $dest"
         rm -rf "$dest"
     fi
+    mkdir -p "$dest"
 
-    info "Downloading model '$name' from HuggingFace ($repo)..."
-    info "  This may take several minutes depending on your connection."
+    local url="${GH_ASSET_URL}/${asset}"
+    local tmp_file="$MODELS_DIR/${asset}"
 
-    if command -v git-lfs >/dev/null 2>&1; then
-        git clone "https://huggingface.co/$repo" "$dest" --depth 1
+    info "Downloading model '$name' from GitHub Releases..."
+
+    if command -v curl >/dev/null 2>&1; then
+        curl -L --progress-bar -o "$tmp_file" "$url"
+    elif command -v wget >/dev/null 2>&1; then
+        wget -q --show-progress -O "$tmp_file" "$url"
     else
-        # Fallback: download individual files without git-lfs
-        mkdir -p "$dest"
-        for f in config.json model.bin tokenizer.json vocabulary.json preprocessor_config.json; do
-            local url="https://huggingface.co/$repo/resolve/main/$f"
-            info "  Downloading $f..."
-            if command -v curl >/dev/null 2>&1; then
-                curl -L --progress-bar -o "$dest/$f" "$url"
-            elif command -v wget >/dev/null 2>&1; then
-                wget -q --show-progress -O "$dest/$f" "$url"
-            else
-                fail "Neither curl nor wget found. Install one of them."
-            fi
-        done
+        fail "Neither curl nor wget found."
     fi
-    ok "Model '$name' ready"
+
+    info "Extracting model '$name'..."
+    tar xzf "$tmp_file" -C "$dest"
+    rm -f "$tmp_file"
+
+    if [ -f "$dest/model.bin" ]; then
+        ok "Model '$name' ready"
+    else
+        fail "Model '$name' extraction failed — model.bin not found"
+    fi
 }
 
 echo ""
 info "=== Downloading Whisper models ==="
-info "The 'fast' model (~310 MB) is required. The 'precise' model (~1.5 GB) is optional."
+info "Models are downloaded from GitHub (no HuggingFace / no Zscaler issues)."
 echo ""
+info "Available models:"
+info "  1) small   — 205 MB (lightweight, quick transcriptions)"
+info "  2) fast    — 656 MB (best speed/quality balance) [default]"
+info "  3) precise — 1.4 GB (highest accuracy)"
+echo ""
+read -r -p "$(printf '\033[1;34m[INFO]\033[0m  Which model to install? [1/2/3, default=2]: ')" MODEL_CHOICE
+MODEL_CHOICE="${MODEL_CHOICE:-2}"
 
-download_model "fast" "mukowaty/faster-whisper-int8"
+case "$MODEL_CHOICE" in
+    1) download_model "small" ;;
+    2) download_model "fast" ;;
+    3) download_model "fast"; download_model "precise" ;;
+    *) info "Invalid choice, installing 'fast'"; download_model "fast" ;;
+esac
 
-read -r -p "$(printf '\033[1;34m[INFO]\033[0m  Download the precise model too? (~1.5 GB) [y/N]: ')" REPLY
-REPLY_LOWER="$(echo "$REPLY" | tr '[:upper:]' '[:lower:]')"
-if [ "$REPLY_LOWER" = "y" ] || [ "$REPLY_LOWER" = "yes" ]; then
-    download_model "precise" "mobiuslabsgmbh/faster-whisper-large-v3-turbo"
+read -r -p "$(printf '\033[1;34m[INFO]\033[0m  Download additional models? [y/N]: ')" MORE
+MORE_LOWER="$(echo "$MORE" | tr '[:upper:]' '[:lower:]')"
+if [ "$MORE_LOWER" = "y" ] || [ "$MORE_LOWER" = "yes" ]; then
+    download_model "small"
+    download_model "fast"
+    download_model "precise"
 fi
 
 # ---------------------------------------------------------------------------

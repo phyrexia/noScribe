@@ -1,39 +1,46 @@
-# MeetingGenie - Model Manager
-# Handles on-demand download of Whisper models with corporate proxy support.
+# noScribe - Model Manager
+# Handles on-demand download of Whisper models from GitHub Releases.
 
 import os
 import sys
 import json
 import shutil
-import hashlib
+import tarfile
 import platform
 import urllib.request
 import urllib.error
 from pathlib import Path
 from typing import Optional, Callable
 
-APP_NAME = 'MeetingGenie'
+APP_NAME = 'noScribe'
 
-# Default models directory: ~/.meetinggenie/models/
-_DEFAULT_MODELS_DIR = Path.home() / '.meetinggenie' / 'models'
+# Default models directory: ~/.noscribe/models/
+_DEFAULT_MODELS_DIR = Path.home() / '.noscribe' / 'models'
+
+# ---------------------------------------------------------------------------
+# GitHub Release configuration
+# ---------------------------------------------------------------------------
+GH_REPO = "phyrexia/noScribe"
+GH_RELEASE_TAG = "models-v1"
+GH_ASSET_URL = "https://github.com/{repo}/releases/download/{tag}/{file}"
 
 # ---------------------------------------------------------------------------
 # Model registry
 # ---------------------------------------------------------------------------
-# Each model entry defines:
-#   hf_repo  – HuggingFace repo slug (used to build download URLs)
-#   files    – list of filenames to download from the repo
-#   size_mb  – approximate total size (for UI display)
-#   quality  – 'fast' | 'precise'
-#
-# We ship ZERO model files in the installer.
-# On first launch the user is prompted to download the 'fast' model.
-# 'precise' is downloaded only if the user explicitly selects it.
-# ---------------------------------------------------------------------------
-
 MODELS = {
+    "small": {
+        "asset": "small.tar.gz",
+        "files": [
+            "config.json",
+            "model.bin",
+            "tokenizer.json",
+            "vocabulary.json",
+        ],
+        "size_mb": 205,
+        "label": "Small (205 MB) – lightweight, quick transcriptions",
+    },
     "fast": {
-        "hf_repo": "mukowaty/faster-whisper-int8",
+        "asset": "fast.tar.gz",
         "files": [
             "config.json",
             "model.bin",
@@ -41,11 +48,11 @@ MODELS = {
             "vocabulary.json",
             "preprocessor_config.json",
         ],
-        "size_mb": 310,
-        "label": "Fast (310 MB) – good for most meetings",
+        "size_mb": 656,
+        "label": "Fast (656 MB) – best speed/quality balance",
     },
     "precise": {
-        "hf_repo": "mobiuslabsgmbh/faster-whisper-large-v3-turbo",
+        "asset": "precise.tar.gz",
         "files": [
             "config.json",
             "model.bin",
@@ -53,16 +60,14 @@ MODELS = {
             "vocabulary.json",
             "preprocessor_config.json",
         ],
-        "size_mb": 1500,
-        "label": "Precise (1.5 GB) – highest accuracy",
+        "size_mb": 1400,
+        "label": "Precise (1.4 GB) – highest accuracy",
     },
 }
 
-HF_BASE = "https://huggingface.co/{repo}/resolve/main/{file}"
-
 
 def models_dir() -> Path:
-    """Root directory where models are stored (~/.meetinggenie/models/)."""
+    """Root directory where models are stored (~/.noscribe/models/)."""
     base = _DEFAULT_MODELS_DIR
     base.mkdir(parents=True, exist_ok=True)
     return base
@@ -93,7 +98,6 @@ def _build_opener(proxy_url: Optional[str] = None, ignore_ssl: bool = False):
         })
         handlers.append(proxy_handler)
     else:
-        # Honour system proxy settings (set by corporate IT via macOS Network Preferences)
         handlers.append(urllib.request.ProxyHandler())
 
     if ignore_ssl:
@@ -113,10 +117,10 @@ def download_model(
     progress_cb: Optional[Callable[[int, int], None]] = None,
 ) -> None:
     """
-    Download a model from HuggingFace Hub.
+    Download a model from GitHub Releases and extract it.
 
     Args:
-        quality:      'fast' or 'precise'
+        quality:      'small', 'fast', or 'precise'
         proxy_url:    Optional explicit proxy, e.g. 'http://proxy.corp.com:8080'
         ignore_ssl:   Set True to bypass SSL verification (corporate proxy interception)
         progress_cb:  Called with (bytes_downloaded, total_bytes) during download
@@ -125,38 +129,45 @@ def download_model(
     dest_dir = model_path(quality)
     dest_dir.mkdir(parents=True, exist_ok=True)
 
+    if model_is_ready(quality):
+        return
+
+    url = GH_ASSET_URL.format(repo=GH_REPO, tag=GH_RELEASE_TAG, file=entry["asset"])
+    tmp_file = dest_dir / entry["asset"]
+
     opener = _build_opener(proxy_url=proxy_url, ignore_ssl=ignore_ssl)
 
-    for filename in entry["files"]:
-        dest_file = dest_dir / filename
-        if dest_file.exists():
-            continue  # already downloaded
+    try:
+        # Follow redirects (GitHub redirects to CDN)
+        req = urllib.request.Request(url)
+        with opener.open(req) as response:
+            total = int(response.headers.get("Content-Length", 0))
+            downloaded = 0
+            chunk_size = 262144  # 256 KB
 
-        url = HF_BASE.format(repo=entry["hf_repo"], file=filename)
-        tmp_file = dest_dir / (filename + ".tmp")
+            with open(tmp_file, "wb") as f:
+                while True:
+                    chunk = response.read(chunk_size)
+                    if not chunk:
+                        break
+                    f.write(chunk)
+                    downloaded += len(chunk)
+                    if progress_cb:
+                        progress_cb(downloaded, total)
 
-        try:
-            with opener.open(url) as response:
-                total = int(response.headers.get("Content-Length", 0))
-                downloaded = 0
-                chunk_size = 65536  # 64 KB
+        # Extract tar.gz into model directory
+        with tarfile.open(tmp_file, "r:gz") as tar:
+            tar.extractall(path=dest_dir)
 
-                with open(tmp_file, "wb") as f:
-                    while True:
-                        chunk = response.read(chunk_size)
-                        if not chunk:
-                            break
-                        f.write(chunk)
-                        downloaded += len(chunk)
-                        if progress_cb:
-                            progress_cb(downloaded, total)
-
-            tmp_file.rename(dest_file)
-
-        except Exception:
-            if tmp_file.exists():
-                tmp_file.unlink()
-            raise
+    except Exception:
+        # Clean up partial downloads
+        if tmp_file.exists():
+            tmp_file.unlink()
+        raise
+    finally:
+        # Remove the tar.gz after extraction
+        if tmp_file.exists():
+            tmp_file.unlink()
 
 
 def delete_model(quality: str) -> None:
