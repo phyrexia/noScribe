@@ -643,11 +643,13 @@ def build_transcribe_page(page: ft.Page, state: AppState) -> ft.Control:
         log_col.visible = False
         right_panel.update()
 
-        # Live always uses fast model for speed
-        sel_model = "fast"
-        model_path = model_manager.get_model_path_for_app(sel_model) or sel_model
-        if not model_path or not os.path.exists(str(model_path)):
-            # Fallback to whatever is available
+        # Live uses smallest available model for speed
+        for live_model in ("small", "fast", "precise"):
+            model_path = model_manager.get_model_path_for_app(live_model)
+            if model_path and os.path.exists(str(model_path)):
+                sel_model = live_model
+                break
+        else:
             sel_model = model_dropdown.value or "fast"
             model_path = model_manager.get_model_path_for_app(sel_model) or sel_model
 
@@ -669,7 +671,7 @@ def build_transcribe_page(page: ft.Page, state: AppState) -> ft.Control:
         args = {
             "locale": get_config('locale', 'en'),
             "device": "auto" if platform.system() == "Darwin" else "cpu",
-            "compute_type": get_config('whisper_compute_type', 'int8'),
+            "compute_type": "int8",  # Always int8 for live (fastest)
             "model_name_or_path": model_path,
             "input_device_id": input_device_dropdown.value,
             "language_code": language_code,
@@ -678,6 +680,11 @@ def build_transcribe_page(page: ft.Page, state: AppState) -> ft.Control:
             "cpu_threads": int(get_config('threads', 4)),
             "ignore_ssl": ignore_ssl,
             "proxy_url": proxy_url,
+            # Optimized VAD for low latency live mode
+            "chunk_duration": 0.3,     # 300ms chunks (was 500ms)
+            "vad_window": 1.0,         # Check after 1s (was 2s)
+            "silence_trigger": 0.4,    # Transcribe after 400ms silence (was 800ms)
+            "max_buffer_size": 10.0,   # Force after 10s (was 15s)
         }
 
         ctx = mp.get_context("spawn")

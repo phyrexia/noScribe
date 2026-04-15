@@ -167,10 +167,11 @@ def live_proc_entrypoint(args: dict, q: queue.Queue, stop_event=None):
                 return "Error Speaker"
 
         SAMPLE_RATE = 16000
-        CHUNK_DURATION = 0.5  # Read from audio source in 0.5 second chunks (lower latency)
-        VAD_WINDOW = 2.0      # Minimum seconds of audio before checking for silence
-        SILENCE_TRIGGER = 0.8 # Seconds of trailing silence that trigger transcription
-        MAX_BUFFER_SIZE = 15.0 # Force transcription if buffer grows beyond this
+        CHUNK_DURATION = float(args.get("chunk_duration", 0.5))
+        VAD_WINDOW = float(args.get("vad_window", 2.0))
+        SILENCE_TRIGGER = float(args.get("silence_trigger", 0.8))
+        MAX_BUFFER_SIZE = float(args.get("max_buffer_size", 15.0))
+        plog("info", f"VAD params: chunk={CHUNK_DURATION}s, window={VAD_WINDOW}s, silence={SILENCE_TRIGGER}s, max_buf={MAX_BUFFER_SIZE}s")
 
         audio_buffer = np.array([], dtype=np.float32)
         
