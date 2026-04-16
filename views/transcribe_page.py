@@ -83,9 +83,10 @@ def build_transcribe_page(page: ft.Page, state: AppState) -> ft.Control:
 
     model_dropdown = ft.Dropdown(
         label="Model",
-        value="precise",
+        value="fast",
         options=[
-            ft.dropdown.Option("fast", "Fast (310 MB)"),
+            ft.dropdown.Option("small", "Small (246 MB)"),
+            ft.dropdown.Option("fast", "Fast (785 MB)"),
             ft.dropdown.Option("precise", "Precise (1.5 GB)"),
         ],
         width=220,
