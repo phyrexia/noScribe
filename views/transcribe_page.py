@@ -81,13 +81,17 @@ def build_transcribe_page(page: ft.Page, state: AppState) -> ft.Control:
         dense=True,
     )
 
+    def _model_label(key, label):
+        check = "\u2713" if model_manager.model_is_ready(key) else "\u2193"  # ✓ or ↓
+        return f"{check} {label}"
+
     model_dropdown = ft.Dropdown(
         label="Model",
         value="fast",
         options=[
-            ft.dropdown.Option("small", "Small (246 MB)"),
-            ft.dropdown.Option("fast", "Fast (785 MB)"),
-            ft.dropdown.Option("precise", "Precise (1.5 GB)"),
+            ft.dropdown.Option("small", _model_label("small", "Small (246 MB)")),
+            ft.dropdown.Option("fast", _model_label("fast", "Fast (785 MB)")),
+            ft.dropdown.Option("precise", _model_label("precise", "Precise (1.5 GB)")),
         ],
         width=220,
         dense=True,
@@ -240,14 +244,8 @@ def build_transcribe_page(page: ft.Page, state: AppState) -> ft.Control:
         transcript_file_text.value = os.path.basename(transcript)
         transcript_file_text.italic = False
         state.transcript_files = [transcript]
-        # Ensure model is downloaded
+        # Model selection — download happens later in worker thread
         sel_model = model_dropdown.value or "precise"
-        if sel_model in ('fast', 'precise') and not model_manager.model_is_ready(sel_model):
-            proxy_url, ignore_ssl = model_manager.get_proxy_from_config(
-                {'proxy_url': get_config('proxy_url', ''),
-                 'ignore_ssl': get_config('ignore_ssl', 'false')})
-            append_log(f"Downloading '{sel_model}' model...", BRAND_BLUE)
-            model_manager.download_model(sel_model, proxy_url=proxy_url, ignore_ssl=ignore_ssl)
         model_path = model_manager.get_model_path_for_app(sel_model) or sel_model
 
         import utils
@@ -283,6 +281,39 @@ def build_transcribe_page(page: ft.Page, state: AppState) -> ft.Control:
     def _run_job_thread(job: TranscriptionJob):
         """Run transcription in a background thread."""
         from transcription_runner import run_transcription
+
+        # Ensure model is downloaded (in worker thread, not UI thread)
+        sel_model = model_dropdown.value or "precise"
+        if not model_manager.model_is_ready(sel_model):
+            proxy_url, ignore_ssl = model_manager.get_proxy_from_config(
+                {'proxy_url': get_config('proxy_url', ''),
+                 'ignore_ssl': get_config('ignore_ssl', 'false')})
+            try:
+                log_list.controls.append(
+                    ft.Text(f"Downloading '{sel_model}' model...", size=13, color=BRAND_BLUE, selectable=True))
+                log_list.update()
+            except Exception:
+                pass
+
+            def _dl_progress(downloaded, total):
+                if total > 0:
+                    pct = downloaded * 100 // total
+                    try:
+                        progress_bar.visible = True
+                        progress_bar.value = pct / 100.0
+                        progress_bar.update()
+                    except Exception:
+                        pass
+
+            model_manager.download_model(sel_model, proxy_url=proxy_url,
+                                         ignore_ssl=ignore_ssl, progress_cb=_dl_progress)
+            job.whisper_model = model_manager.get_model_path_for_app(sel_model) or sel_model
+            try:
+                log_list.controls.append(
+                    ft.Text(f"Model '{sel_model}' ready.", size=13, color=BRAND_BLUE, selectable=True))
+                log_list.update()
+            except Exception:
+                pass
 
         def speaker_naming_fn(speakers_data, audio_path):
             """Called from worker thread — uses pubsub bridge to show dialog on UI thread."""
@@ -341,7 +372,7 @@ def build_transcribe_page(page: ft.Page, state: AppState) -> ft.Control:
 
     def on_start_click(e):
         if not state.audio_files:
-            page.show_dialog(ft.SnackBar(ft.Text("Please select an audio file first.")))
+            append_log("Please select an audio file first.", "#FF453A")
             return
         try:
             job = _build_job()
