@@ -50,6 +50,10 @@ BRAND_BLUE = "#0A84FF"
 def _start_warmup():
     """Spawn a background subprocess that imports torch/pyannote/whisper
     to warm the OS page cache. Makes first transcription ~2-3x faster."""
+    if getattr(sys, 'frozen', False):
+        # Skip warmup in PyInstaller bundle — models already on disk,
+        # and spawn causes duplicate window issues.
+        return
     try:
         ctx = mp.get_context("spawn")
         from warmup import warmup
