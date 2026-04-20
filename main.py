@@ -17,6 +17,19 @@ import flet as ft
 
 # Ensure the app directory is on sys.path so modules resolve correctly
 app_dir = os.path.abspath(os.path.dirname(__file__))
+if getattr(sys, 'frozen', False):
+    # Running from PyInstaller bundle — use bundled Flet client
+    app_dir = sys._MEIPASS
+    flet_client = os.path.join(app_dir, 'flet_client')
+    if os.path.isdir(flet_client):
+        # Find the Flet.app inside the bundled client dir
+        for entry in os.listdir(flet_client):
+            candidate = os.path.join(flet_client, entry)
+            flet_app = os.path.join(candidate, 'Flet.app')
+            if os.path.exists(flet_app):
+                os.environ['FLET_VIEW_PATH'] = flet_app
+                break
+
 if app_dir not in sys.path:
     sys.path.insert(0, app_dir)
 
