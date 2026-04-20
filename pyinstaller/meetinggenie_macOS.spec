@@ -60,12 +60,8 @@ mg_datas += copy_metadata('pyannote.pipeline')
 mg_datas += collect_data_files('flet')
 mg_datas += collect_data_files('flet_desktop')
 
-# Bundle Flet desktop client (Flutter app that renders the UI)
-import subprocess as _sp
-_flet_ver = _sp.check_output([_os.path.join(_os.environ.get('MG_VENV_DIR', _os.path.expanduser('~/.meetinggenie-venv')), 'bin', 'python3'), '-c', 'import flet;print(flet.__version__)'], text=True).strip()
-_flet_client = _os.path.expanduser(f'~/.flet/client/flet-desktop-full-{_flet_ver}')
-if _os.path.isdir(_flet_client):
-    mg_datas += [(_flet_client, f'flet_client/flet-desktop-full-{_flet_ver}')]
+# NOTE: Flet desktop client (Flet.app) is copied AFTER PyInstaller
+# by build_meetinggenie.sh — PyInstaller can't process Flutter binaries.
 
 # ---------------------------------------------------------------------------
 # Binaries

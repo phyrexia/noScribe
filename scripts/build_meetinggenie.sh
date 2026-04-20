@@ -79,6 +79,22 @@ cd "$ROOT_DIR/pyinstaller"
 "$VENV_DIR/bin/pyinstaller" "$SPEC" --distpath dist --workpath build --noconfirm
 echo "✓ Build complete: $DIST/MeetingGenie.app"
 
+# --- 4b. Bundle Flet desktop client ------------------------------------------
+echo ""
+echo "--- Bundling Flet client ---"
+FLET_VER=$("$PYTHON" -c "import flet; print(flet.__version__)" 2>/dev/null || echo "0.84.0")
+FLET_CLIENT="$HOME/.flet/client/flet-desktop-full-$FLET_VER"
+FLET_DEST="$DIST/MeetingGenie.app/Contents/Resources/flet_client/flet-desktop-full-$FLET_VER"
+
+if [ -d "$FLET_CLIENT" ]; then
+    mkdir -p "$(dirname "$FLET_DEST")"
+    cp -a "$FLET_CLIENT" "$FLET_DEST"
+    echo "✓ Flet client $FLET_VER bundled ($(du -sh "$FLET_DEST" | cut -f1))"
+else
+    echo "WARNING: Flet client not found at $FLET_CLIENT"
+    echo "Run the app once with: $PYTHON main.py  (to download client)"
+fi
+
 # --- 5. Code signing (optional) ----------------------------------------------
 if [ "${MG_SKIP_SIGN:-0}" != "1" ] && [ -n "${MG_IDENTITY:-}" ]; then
     echo ""
