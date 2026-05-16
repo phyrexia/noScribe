@@ -46,6 +46,14 @@ class AppState:
         self.compute_device_label: str = "CPU"
         self.compute_backend: str = ""
 
+        # Per-role device labels (empty string until a worker reports).
+        # 'transcription' tracks the whisper backend (the bottleneck),
+        # 'diarization' tracks pyannote.
+        self.compute_devices: dict[str, str] = {
+            'diarization': '',
+            'transcription': '',
+        }
+
     def _detect_device(self) -> str:
         """Initial compute device placeholder.
 
@@ -55,24 +63,36 @@ class AppState:
         """
         return "cpu"
 
-    def update_compute_device(self, backend: str, label: str):
+    def update_compute_device(self, backend: str, label: str, role: str = "transcription"):
         """Called when a worker reports its actual compute backend.
 
-        backend: 'ct2-cpu' | 'mlx-metal' | 'cuda' | ...
-        label: human-readable string for the badge.
+        backend: 'ct2-cpu' | 'mlx-metal' | 'cuda' | 'mps' | 'cpu' | ...
+        label:   human-readable string for the badge.
+        role:    'transcription' (whisper, default) or 'diarization' (pyannote).
         """
-        self.compute_backend = backend or ""
-        self.compute_device_label = label or "CPU"
-        if backend == "cuda":
-            self.compute_device = "cuda"
-        elif backend == "mlx-metal":
-            self.compute_device = "metal"
-        else:
-            self.compute_device = "cpu"
+        label = label or "CPU"
+        backend = backend or ""
+
+        if role in self.compute_devices:
+            self.compute_devices[role] = label
+
+        # The main badge tracks the transcription (whisper) backend —
+        # that's the bottleneck and what the user cares about most.
+        if role == "transcription":
+            self.compute_backend = backend
+            self.compute_device_label = label
+            if backend == "cuda":
+                self.compute_device = "cuda"
+            elif backend == "mlx-metal":
+                self.compute_device = "metal"
+            else:
+                self.compute_device = "cpu"
+
         try:
             self.bus.publish(EventType.DEVICE_UPDATE, {
-                "backend": self.compute_backend,
-                "label": self.compute_device_label,
+                "backend": backend,
+                "label": label,
+                "role": role,
             })
         except Exception:
             pass

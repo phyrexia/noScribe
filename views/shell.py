@@ -15,6 +15,14 @@ def _is_accelerated(backend: str) -> bool:
     return backend in ("mlx-metal", "cuda")
 
 
+def _label_is_accelerated(label: str) -> bool:
+    """Heuristic for role-specific labels (e.g. pyannote 'Metal/GPU (MPS)')."""
+    if not label:
+        return False
+    low = label.lower()
+    return any(k in low for k in ("metal", "mps", "cuda", "gpu", "mlx"))
+
+
 def _build_badge_content(state: AppState) -> ft.Row:
     accel = _is_accelerated(state.compute_backend)
     color = "#4CAF50" if accel else ft.Colors.ON_SURFACE_VARIANT
@@ -27,6 +35,35 @@ def _build_badge_content(state: AppState) -> ft.Row:
 
 def _badge_border_color(state: AppState):
     return "#4CAF50" if _is_accelerated(state.compute_backend) else ft.Colors.OUTLINE_VARIANT
+
+
+def _build_role_chip(prefix: str, label: str) -> ft.Container:
+    """Small chip showing 'Prefix: Label' with accent if the label looks accelerated."""
+    accel = _label_is_accelerated(label)
+    color = "#4CAF50" if accel else ft.Colors.ON_SURFACE_VARIANT
+    border = "#4CAF50" if accel else ft.Colors.OUTLINE_VARIANT
+    icon = ft.Icons.MEMORY if accel else ft.Icons.COMPUTER
+    return ft.Container(
+        content=ft.Row([
+            ft.Icon(icon, size=12, color=color),
+            ft.Text(f"{prefix}: {label}", size=10, color=color),
+        ], spacing=4, tight=True),
+        border=ft.border.all(1, border),
+        border_radius=10,
+        padding=ft.padding.symmetric(horizontal=6, vertical=2),
+    )
+
+
+def _build_role_chips_row(state: AppState) -> ft.Row:
+    """Render a row of per-role chips, hiding roles that haven't reported yet."""
+    chips = []
+    diar = state.compute_devices.get('diarization', '')
+    trans = state.compute_devices.get('transcription', '')
+    if diar:
+        chips.append(_build_role_chip("Diar", diar))
+    if trans:
+        chips.append(_build_role_chip("Trans", trans))
+    return ft.Row(chips, spacing=4, tight=True)
 
 
 def build_shell(page: ft.Page, state: AppState, pages: dict[str, ft.Control]):
@@ -62,11 +99,19 @@ def build_shell(page: ft.Page, state: AppState, pages: dict[str, ft.Control]):
         padding=ft.padding.symmetric(horizontal=8, vertical=3),
     )
 
+    # Per-role chips (diarization / transcription) — hidden until reported.
+    role_chips_container = ft.Container(content=_build_role_chips_row(state))
+
     def _on_device_update(_payload):
         device_badge.content = _build_badge_content(state)
         device_badge.border = ft.border.all(1, _badge_border_color(state))
+        role_chips_container.content = _build_role_chips_row(state)
         try:
             device_badge.update()
+        except Exception:
+            pass
+        try:
+            role_chips_container.update()
         except Exception:
             pass
 
@@ -86,6 +131,7 @@ def build_shell(page: ft.Page, state: AppState, pages: dict[str, ft.Control]):
                             color=BRAND_BLUE,
                         ),
                         device_badge,
+                        role_chips_container,
                     ],
                     spacing=8,
                 ),

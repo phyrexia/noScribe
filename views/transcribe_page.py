@@ -345,7 +345,7 @@ def build_transcribe_page(page: ft.Page, state: AppState) -> ft.Control:
 
         try:
             def device_fn(backend, label, role=None):
-                state.update_compute_device(backend, label)
+                state.update_compute_device(backend, label, role=role or "transcription")
 
             run_transcription(
                 job=job,

@@ -110,7 +110,12 @@ def pyannote_proc_entrypoint(args: dict, q):
                 raise Exception('Platform not supported yet.')
 
         device_labels = {'mps': 'Metal/GPU (MPS)', 'cuda': 'NVIDIA GPU (CUDA)', 'cpu': 'CPU'}
-        plog("info", f"Pyannote engine: {device_labels.get(device, device)}")
+        device_label = device_labels.get(device, device)
+        plog("info", f"Pyannote engine: {device_label}")
+        try:
+            q.put({"type": "device", "role": "diarization", "backend": device, "label": device_label})
+        except Exception:
+            pass
 
         pipeline = Pipeline.from_pretrained(Path(os.path.join(app_dir, 'pyannote')))
         waveform, sample_rate = torchaudio.load(audio_file)        

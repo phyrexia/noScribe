@@ -186,6 +186,15 @@ def run_transcription(
                         elif mtype == "progress":
                             pct = msg.get("pct", 0)
                             progress_fn(5 + int(pct * 0.45))  # 5-50%
+                        elif mtype == "device":
+                            try:
+                                device_fn(
+                                    msg.get("backend", ""),
+                                    msg.get("label", "CPU"),
+                                    role=msg.get("role", "diarization"),
+                                )
+                            except Exception:
+                                pass
                         elif mtype == "result":
                             if msg.get("ok"):
                                 diarization = msg.get("segments", [])
