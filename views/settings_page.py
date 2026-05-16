@@ -1,10 +1,17 @@
 # MeetingGenie - Settings Page
 
+import os
+import platform
+from subprocess import Popen, DEVNULL
+
 import flet as ft
 from app_state import AppState
 from config import get_config, set_config, save_config
 
 BRAND_BLUE = "#0A84FF"
+
+# How many sample-play buttons to render per signature row.
+MAX_SAMPLES_IN_UI = 4
 
 DEFAULT_SUMMARY_PROMPT = (
     "You are an expert executive assistant and meeting scribe. "
@@ -106,105 +113,275 @@ def build_settings_page(page: ft.Page, state: AppState) -> ft.Control:
         value=get_config('ignore_ssl', 'false').lower() == 'true',
     )
 
-    # ---- Speaker DB section ----
+    # ---- Voice Signature Manager ----
     speaker_table = ft.Column(spacing=4)
+    similar_panel = ft.Column(spacing=4)
+    sort_state = {"by": "last_used"}  # 'name' | 'last_used' | 'use_count'
 
-    def _build_speaker_row(name, info):
-        """Build a row for one speaker with rename, delete actions."""
-        name_field = ft.TextField(value=name, dense=True, width=160, read_only=True)
-        created = info.get("created", "?") if info else "?"
-        updated = info.get("updated", "?") if info else "?"
-
-        def _on_rename(e):
-            if name_field.read_only:
-                name_field.read_only = False
-                name_field.focus()
-                name_field.update()
+    def _play_sample(path: str):
+        """Play a stored sample WAV via `afplay` (macOS) or `ffplay` fallback."""
+        import speaker_db
+        abs_path = speaker_db.sample_abs_path(path)
+        if not os.path.exists(abs_path):
+            page.show_dialog(ft.SnackBar(ft.Text(f"Sample missing: {os.path.basename(abs_path)}")))
+            return
+        try:
+            if platform.system() == "Darwin":
+                Popen(["afplay", abs_path])
             else:
-                new_name = name_field.value.strip()
-                if new_name and new_name != name:
-                    import speaker_db
-                    speaker_db.rename_speaker(name, new_name)
-                    page.show_dialog(ft.SnackBar(ft.Text(f"Renamed: {name} → {new_name}")))
-                    _list_speakers()
-                else:
-                    name_field.read_only = True
-                    name_field.update()
+                Popen(["ffplay", "-nodisp", "-autoexit", abs_path], stdout=DEVNULL, stderr=DEVNULL)
+        except Exception as ex:
+            page.show_dialog(ft.SnackBar(ft.Text(f"Play error: {ex}")))
+
+    def _relative_time(iso_str: str) -> str:
+        if not iso_str or iso_str == '?':
+            return '—'
+        try:
+            from datetime import datetime as _dt
+            # Tolerate trailing Z
+            s = iso_str.rstrip('Z')
+            try:
+                dt = _dt.fromisoformat(s)
+            except ValueError:
+                # Date-only legacy value
+                dt = _dt.fromisoformat(s + 'T00:00:00')
+            delta = _dt.utcnow() - dt
+            secs = int(delta.total_seconds())
+            if secs < 0:
+                return 'just now'
+            if secs < 60:
+                return f"{secs}s ago"
+            if secs < 3600:
+                return f"{secs // 60}m ago"
+            if secs < 86400:
+                return f"{secs // 3600}h ago"
+            days = secs // 86400
+            if days < 30:
+                return f"{days}d ago"
+            if days < 365:
+                return f"{days // 30}mo ago"
+            return f"{days // 365}y ago"
+        except Exception:
+            return iso_str
+
+    def _build_speaker_row(spk: dict):
+        """Render one signature row: rename, samples, stats, delete."""
+        sid = spk.get('id') or ''
+        name = spk.get('name', '')
+        last_used = spk.get('last_used', '')
+        use_count = int(spk.get('use_count', 0) or 0)
+        created = spk.get('created', '?')
+        samples = list(spk.get('samples', []) or [])
+
+        name_field = ft.TextField(
+            value=name, dense=True, width=180,
+            tooltip="Rename — saves on blur",
+        )
+
+        def _on_blur(e):
+            import speaker_db
+            new_name = (name_field.value or '').strip()
+            if new_name and new_name != name:
+                speaker_db.rename_speaker(sid or name, new_name)
+                page.show_dialog(ft.SnackBar(ft.Text(f"Renamed: {name} → {new_name}")))
+                _refresh()
+        name_field.on_blur = _on_blur
 
         def _on_delete(e):
-            import speaker_db
-            speaker_db.delete_speaker(name)
-            page.show_dialog(ft.SnackBar(ft.Text(f"Deleted: {name}")))
-            _list_speakers()
+            def _confirm(e2):
+                import speaker_db
+                speaker_db.delete_speaker(sid or name)
+                page.pop_dialog()
+                page.show_dialog(ft.SnackBar(ft.Text(f"Deleted: {name}")))
+                _refresh()
 
-        def _on_merge(e):
-            """Show merge dialog to pick which speaker to merge into this one."""
-            import speaker_db
-            others = [n for n in speaker_db.list_speakers() if n.lower() != name.lower()]
-            if not others:
-                page.show_dialog(ft.SnackBar(ft.Text("No other speakers to merge with.")))
-                return
-
-            merge_dropdown = ft.Dropdown(
-                label="Merge into this speaker",
-                options=[ft.dropdown.Option(n) for n in others],
-                width=200,
-            )
-
-            def _do_merge(e):
-                target = merge_dropdown.value
-                if target:
-                    sim = speaker_db.get_similarity(name, target)
-                    speaker_db.merge_speakers(name, target)
-                    page.pop_dialog()
-                    page.show_dialog(ft.SnackBar(
-                        ft.Text(f"Merged {target} into {name} (similarity: {int(sim*100)}%)")
-                    ))
-                    _list_speakers()
-
-            merge_dlg = ft.AlertDialog(
+            confirm_dlg = ft.AlertDialog(
                 modal=True,
-                title=ft.Text(f"Merge into '{name}'"),
-                content=ft.Column([
-                    ft.Text("Select speaker to absorb. Their voice signature will be blended.", size=13),
-                    merge_dropdown,
-                ], tight=True, width=300),
+                title=ft.Text(f"Delete '{name}'?"),
+                content=ft.Text(
+                    "The voice signature and its stored WAV samples will be permanently removed.",
+                    size=13,
+                ),
                 actions=[
                     ft.TextButton("Cancel", on_click=lambda e: page.pop_dialog()),
-                    ft.ElevatedButton("Merge", on_click=_do_merge, bgcolor="#FF9800", color=ft.Colors.WHITE),
+                    ft.ElevatedButton(
+                        "Delete", on_click=_confirm,
+                        bgcolor="#FF453A", color=ft.Colors.WHITE,
+                    ),
                 ],
             )
-            page.show_dialog(merge_dlg)
+            page.show_dialog(confirm_dlg)
+
+        # Audio play buttons for stored samples (compact)
+        play_buttons = []
+        for idx, sp in enumerate(samples[:MAX_SAMPLES_IN_UI], start=1):
+            def _make_play(p=sp):
+                return lambda e: _play_sample(p)
+            play_buttons.append(
+                ft.IconButton(
+                    icon=ft.Icons.PLAY_CIRCLE_OUTLINE,
+                    tooltip=f"Play sample {idx}",
+                    icon_size=18,
+                    on_click=_make_play(),
+                )
+            )
+        if not play_buttons:
+            play_buttons.append(
+                ft.Text("no samples", size=10, italic=True,
+                        color=ft.Colors.ON_SURFACE_VARIANT)
+            )
+
+        meta = ft.Row(
+            [
+                ft.Text(f"used {use_count}×", size=11,
+                        color=ft.Colors.ON_SURFACE_VARIANT),
+                ft.Text(f"last {_relative_time(last_used)}", size=11,
+                        color=ft.Colors.ON_SURFACE_VARIANT),
+                ft.Text(f"created {created}", size=11,
+                        color=ft.Colors.ON_SURFACE_VARIANT),
+            ],
+            spacing=10,
+        )
 
         return ft.Container(
-            content=ft.Row([
-                name_field,
-                ft.Text(f"Created: {created}", size=11, color=ft.Colors.ON_SURFACE_VARIANT),
-                ft.Text(f"Updated: {updated}", size=11, color=ft.Colors.ON_SURFACE_VARIANT),
-                ft.IconButton(icon=ft.Icons.EDIT, tooltip="Rename", on_click=_on_rename, icon_size=18),
-                ft.IconButton(icon=ft.Icons.MERGE, tooltip="Merge with another speaker", on_click=_on_merge, icon_size=18),
-                ft.IconButton(icon=ft.Icons.DELETE_OUTLINE, tooltip="Delete", on_click=_on_delete, icon_size=18, icon_color="#FF453A"),
-            ], spacing=8, alignment=ft.MainAxisAlignment.START),
+            content=ft.Row(
+                [
+                    name_field,
+                    ft.Row(play_buttons, spacing=2, tight=True),
+                    meta,
+                    ft.Container(expand=True),
+                    ft.IconButton(
+                        icon=ft.Icons.DELETE_OUTLINE,
+                        tooltip="Delete signature",
+                        on_click=_on_delete,
+                        icon_size=18,
+                        icon_color="#FF453A",
+                    ),
+                ],
+                spacing=8,
+                alignment=ft.MainAxisAlignment.START,
+            ),
             border=ft.border.all(1, ft.Colors.OUTLINE_VARIANT),
             border_radius=8,
             padding=ft.padding.symmetric(horizontal=12, vertical=6),
         )
 
-    def _list_speakers(e=None):
+    def _sort_speakers(speakers):
+        by = sort_state["by"]
+        if by == "name":
+            return sorted(speakers, key=lambda s: (s.get('name') or '').lower())
+        if by == "use_count":
+            return sorted(speakers, key=lambda s: int(s.get('use_count', 0) or 0),
+                          reverse=True)
+        # last_used (default)
+        return sorted(speakers, key=lambda s: s.get('last_used') or '',
+                      reverse=True)
+
+    def _build_similar_panel():
+        """List up to 10 most-suspicious near-duplicate pairs."""
+        import speaker_db
+        speakers = {s['id']: s for s in speaker_db.list_speakers_full() if s.get('id')}
+        rows = []
+        pairs = [
+            p for p in speaker_db.pairwise_similarity()
+            if 0.6 <= p[2] < 1.0 and p[0] in speakers and p[1] in speakers
+        ]
+        if not pairs:
+            return [
+                ft.Text("No suspicious near-duplicates (≥ 60 %).", size=12, italic=True,
+                        color=ft.Colors.ON_SURFACE_VARIANT),
+            ]
+        for ida, idb, sim in pairs[:10]:
+            a = speakers[ida]
+            b = speakers[idb]
+            pct = int(sim * 100)
+            badge_color = "#FF453A" if sim > 0.85 else "#FF9800" if sim > 0.7 else "#9E9E9E"
+
+            def _make_merge(keep, drop, keep_name, drop_name):
+                def _do_merge(e):
+                    import speaker_db as sd
+                    surviving = sd.merge_speakers(keep, drop)
+                    if surviving:
+                        page.show_dialog(ft.SnackBar(
+                            ft.Text(f"Merged '{drop_name}' into '{keep_name}'"),
+                        ))
+                    _refresh()
+                return _do_merge
+
+            rows.append(
+                ft.Container(
+                    content=ft.Row(
+                        [
+                            ft.Container(
+                                content=ft.Text(f"{pct}%", size=11, weight=ft.FontWeight.BOLD,
+                                                color=ft.Colors.WHITE),
+                                bgcolor=badge_color,
+                                padding=ft.padding.symmetric(horizontal=8, vertical=2),
+                                border_radius=4,
+                            ),
+                            ft.Text(a['name'], size=13, weight=ft.FontWeight.W_500),
+                            ft.Text("↔", size=13, color=ft.Colors.ON_SURFACE_VARIANT),
+                            ft.Text(b['name'], size=13, weight=ft.FontWeight.W_500),
+                            ft.Container(expand=True),
+                            ft.TextButton(
+                                f"Merge into {a['name']}",
+                                icon=ft.Icons.MERGE,
+                                on_click=_make_merge(ida, idb, a['name'], b['name']),
+                            ),
+                            ft.TextButton(
+                                f"Merge into {b['name']}",
+                                icon=ft.Icons.MERGE,
+                                on_click=_make_merge(idb, ida, b['name'], a['name']),
+                            ),
+                        ],
+                        spacing=8,
+                    ),
+                    border=ft.border.all(1, ft.Colors.OUTLINE_VARIANT),
+                    border_radius=8,
+                    padding=ft.padding.symmetric(horizontal=10, vertical=4),
+                )
+            )
+        return rows
+
+    def _refresh(e=None):
         try:
             import speaker_db
-            names = speaker_db.list_speakers()
-            if names:
-                speaker_table.controls = []
-                for n in names:
-                    info = speaker_db.get_speaker_info(n)
-                    speaker_table.controls.append(_build_speaker_row(n, info))
+            speakers = speaker_db.list_speakers_full()
+            if speakers:
+                speaker_table.controls = [
+                    _build_speaker_row(s) for s in _sort_speakers(speakers)
+                ]
             else:
                 speaker_table.controls = [ft.Text("No saved speakers.", italic=True, size=13)]
-            speaker_table.update()
+            similar_panel.controls = _build_similar_panel()
+            try:
+                speaker_table.update()
+                similar_panel.update()
+            except Exception:
+                pass
         except Exception as ex:
             speaker_table.controls = [ft.Text(f"Error: {ex}", size=13, color="#FF453A")]
-            speaker_table.update()
+            try:
+                speaker_table.update()
+            except Exception:
+                pass
+
+    def _on_sort_change(e):
+        sort_state["by"] = e.control.value or "last_used"
+        _refresh()
+
+    sort_dropdown = ft.Dropdown(
+        label="Sort by",
+        value="last_used",
+        options=[
+            ft.dropdown.Option("last_used", "Last used"),
+            ft.dropdown.Option("name", "Name (A→Z)"),
+            ft.dropdown.Option("use_count", "Usage count"),
+        ],
+        on_change=_on_sort_change,
+        width=180,
+        dense=True,
+    )
 
     # ---- Layout ----
     save_btn = ft.ElevatedButton(
@@ -247,13 +424,27 @@ def build_settings_page(page: ft.Page, state: AppState) -> ft.Control:
             ssl_cb,
             ft.Divider(height=16),
 
-            # Speaker DB
-            ft.Text("Saved Speakers", size=18, weight=ft.FontWeight.W_600),
-            ft.Text("Voice signatures saved for automatic speaker recognition.", size=13,
-                     color=ft.Colors.ON_SURFACE_VARIANT),
+            # Voice Signature Manager
+            ft.Text("Voice Signatures", size=18, weight=ft.FontWeight.W_600),
+            ft.Text(
+                "Per-speaker voice models used for automatic recognition. "
+                "Rename, play stored samples, merge duplicates or delete entries you no longer need.",
+                size=13, color=ft.Colors.ON_SURFACE_VARIANT,
+            ),
             ft.Divider(height=8, color=ft.Colors.TRANSPARENT),
-            ft.TextButton("Refresh speaker list", on_click=_list_speakers, icon=ft.Icons.REFRESH),
+            ft.Row([
+                sort_dropdown,
+                ft.TextButton("Refresh", on_click=_refresh, icon=ft.Icons.REFRESH),
+            ], spacing=12),
             speaker_table,
+            ft.Divider(height=16, color=ft.Colors.TRANSPARENT),
+            ft.Text("Suspicious near-duplicates", size=14, weight=ft.FontWeight.W_600),
+            ft.Text(
+                "Pairs with cosine similarity between 60 % and 100 %. "
+                "Merge them if they actually refer to the same person.",
+                size=12, color=ft.Colors.ON_SURFACE_VARIANT,
+            ),
+            similar_panel,
             ft.Divider(height=24),
 
             save_btn,
@@ -263,16 +454,16 @@ def build_settings_page(page: ft.Page, state: AppState) -> ft.Control:
         expand=True,
     )
 
-    # Pre-populate speaker list (without .update() since not yet on page)
+    # Pre-populate signature list (without .update() since not yet on page)
     try:
         import speaker_db
-        names = speaker_db.list_speakers()
-        if names:
-            for n in names:
-                info = speaker_db.get_speaker_info(n)
-                speaker_table.controls.append(_build_speaker_row(n, info))
+        speakers = speaker_db.list_speakers_full()
+        if speakers:
+            for s in _sort_speakers(speakers):
+                speaker_table.controls.append(_build_speaker_row(s))
         else:
             speaker_table.controls.append(ft.Text("No saved speakers.", italic=True, size=13))
+        similar_panel.controls.extend(_build_similar_panel())
     except Exception:
         speaker_table.controls.append(ft.Text("Error loading speakers.", size=13, color="#FF453A"))
 
