@@ -55,6 +55,7 @@ import AdvancedHTMLParser
 import html
 from threading import Thread
 from tempfile import TemporaryDirectory
+from audio import convert as audio_convert
 import datetime
 from pathlib import Path
 if platform.system() in ("Darwin", "Linux"):
@@ -1364,7 +1365,7 @@ def _init_app_state(app):
     app._worker_threads = []
     app._mp_proc = None
     app._mp_queue = None
-    app._ffmpeg_proc = None
+    app._audio_converter = None
     app._shutting_down = False
 
 
@@ -3225,83 +3226,35 @@ class App(ctk.CTk):
                 try:
                     self.logn()
                     self.logn(t('start_audio_conversion'), 'highlight')
-                
-                    if int(job.stop) > 0: # transcribe only part of the audio
-                        duration_ms = int(job.stop) - int(job.start)
-                        end_pos_cmd = f'-t {duration_ms}ms'
-                    else: # transcribe until the end
-                        end_pos_cmd = ''
 
-                    arguments = f' -loglevel warning -hwaccel auto -y -ss {job.start}ms -i \"{job.audio_file}\" {end_pos_cmd} -ar 16000 -ac 1 -c:a pcm_s16le "{tmp_audio_file}"'
-                    if platform.system() == 'Windows':
-                        ffmpeg_path = os.path.join(app_dir, 'ffmpeg.exe')
-                        ffmpeg_cmd = ffmpeg_path + arguments
-                    elif platform.system() == "Darwin":  # = MAC
-                        # Prefer native arm64 binary on Apple Silicon to avoid Rosetta2
-                        ffmpeg_arm64 = os.path.join(app_dir, 'ffmpeg-arm64')
-                        if platform.machine() == "arm64" and os.path.exists(ffmpeg_arm64):
-                            ffmpeg_path = ffmpeg_arm64
-                        else:
-                            ffmpeg_path = os.path.join(app_dir, 'ffmpeg')
-                        ffmpeg_cmd = shlex.split(ffmpeg_path + arguments)
-                    elif platform.system() == "Linux":
-                        ffmpeg_path = os.path.join(app_dir, 'ffmpeg-linux-x86_64')
-                        ffmpeg_cmd = shlex.split(ffmpeg_path + arguments)
-                    else:
-                        raise Exception('Platform not supported yet.')
+                    start_ms = int(job.start)
+                    stop_ms = int(job.stop) if int(job.stop) > 0 else 0
 
-                    self.logn(ffmpeg_cmd, where='file')
+                    self.logn(
+                        f'audio convert: src="{job.audio_file}" dst="{tmp_audio_file}" '
+                        f'start_ms={start_ms} stop_ms={stop_ms} ar=16000 ac=1 fmt=pcm_s16le',
+                        where='file',
+                    )
 
-                    if platform.system() == 'Windows':
-                        # (suppresses the terminal, see: https://stackoverflow.com/questions/1813872/running-a-process-in-pythonw-with-popen-without-a-console)
-                        startupinfo = STARTUPINFO()
-                        startupinfo.dwFlags |= STARTF_USESHOWWINDOW
-                        ffmpeg_proc = Popen(
-                            ffmpeg_cmd,
-                            stdout=DEVNULL,
-                            stderr=STDOUT,
-                            universal_newlines=True,
-                            encoding='utf-8',
-                            startupinfo=startupinfo
-                        )
-                    elif platform.system() in ("Darwin", "Linux"):
-                        ffmpeg_proc = Popen(
-                            ffmpeg_cmd,
-                            stdout=DEVNULL,
-                            stderr=STDOUT,
-                            universal_newlines=True,
-                            encoding='utf-8'
-                        )
-
-                    # Track process for external cancel/close handling
-                    self._ffmpeg_proc = ffmpeg_proc
-
+                    # Use PyAV-backed converter; runs in this thread, polling
+                    # self.cancel each decoded frame for responsive cancel.
+                    self._audio_converter = audio_convert.ToWav(
+                        job.audio_file,
+                        tmp_audio_file,
+                        start_ms=start_ms,
+                        stop_ms=stop_ms,
+                        should_cancel=lambda: bool(self.cancel),
+                    )
                     try:
-                        # Poll loop to allow responsive cancel during conversion
-                        while True:
-                            rc = ffmpeg_proc.poll()
-                            if rc is not None:
-                                break
-                            if self.cancel:
-                                try:
-                                    ffmpeg_proc.terminate()
-                                except Exception:
-                                    pass
-                                # Ensure process does not linger
-                                try:
-                                    ffmpeg_proc.wait(timeout=1.0)
-                                except Exception:
-                                    try:
-                                        ffmpeg_proc.kill()
-                                    except Exception:
-                                        pass
-                                raise Exception(t('err_user_cancelation'))
-                            time.sleep(0.1)
-
-                        if ffmpeg_proc.returncode and ffmpeg_proc.returncode > 0:
-                            raise Exception(t('err_ffmpeg'))
+                        with self._audio_converter as conv:
+                            conv.run()
+                    except audio_convert.AudioConversionCanceled:
+                        raise Exception(t('err_user_cancelation'))
+                    except audio_convert.AudioConversionError as e:
+                        self.logn(f'audio conversion failed: {e}', where='file')
+                        raise Exception(t('err_ffmpeg'))
                     finally:
-                        self._ffmpeg_proc = None
+                        self._audio_converter = None
                     self.logn(t('audio_conversion_finished'))
                     self.set_progress(1, 100, job.speaker_detection)
                 except Exception as e:
@@ -3595,7 +3548,7 @@ class App(ctk.CTk):
                             self.logn(t('rescue_saving', file=job.transcript_file), 'error', link=f'file://{job.transcript_file}')
                             last_auto_save = datetime.datetime.now()
 
-                    # Prepare VAD data locally for pause adjustment (audio is 16kHz mono after ffmpeg conversion)
+                    # Prepare VAD data locally for pause adjustment (audio is 16kHz mono PCM s16le)
                     from faster_whisper.audio import decode_audio
                     from faster_whisper.vad import VadOptions, get_speech_timestamps
                     try:
@@ -4202,22 +4155,16 @@ class App(ctk.CTk):
                     self._mp_proc = None
                     self._mp_queue = None
 
-            # Terminate ffmpeg if currently converting
+            # Close active audio converter if any (cooperative cancel via self.cancel)
             try:
-                if getattr(self, "_ffmpeg_proc", None) is not None and self._ffmpeg_proc.poll() is None:
+                conv = getattr(self, "_audio_converter", None)
+                if conv is not None:
                     try:
-                        self._ffmpeg_proc.terminate()
+                        conv.close()
                     except Exception:
                         pass
-                    try:
-                        self._ffmpeg_proc.wait(timeout=1.0)
-                    except Exception:
-                        try:
-                            self._ffmpeg_proc.kill()
-                        except Exception:
-                            pass
             finally:
-                self._ffmpeg_proc = None
+                self._audio_converter = None
 
             # Join worker threads briefly to give them a chance to exit
             try:
@@ -4295,19 +4242,14 @@ def _cleanup_app(app):
             finally:
                 app._mp_queue = None
 
-        # Terminate ffmpeg if currently converting
-        if getattr(app, "_ffmpeg_proc", None) is not None:
+        # Close active audio converter (will unblock decode loop on next cancel poll)
+        if getattr(app, "_audio_converter", None) is not None:
             try:
-                if app._ffmpeg_proc.poll() is None:
-                    app._ffmpeg_proc.terminate()
-                    app._ffmpeg_proc.wait(timeout=1.0)
+                app._audio_converter.close()
             except Exception:
-                try:
-                    app._ffmpeg_proc.kill()
-                except Exception:
-                    pass
+                pass
             finally:
-                app._ffmpeg_proc = None
+                app._audio_converter = None
 
         # Join worker threads briefly
         for th in list(getattr(app, "_worker_threads", [])):

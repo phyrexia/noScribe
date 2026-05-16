@@ -9,8 +9,10 @@ block_cipher = None
 
 # noScribe:
 
-noScribe_datas = [] 
-noScribe_binaries = [('../ffmpeg.exe', '.')]
+noScribe_datas = []
+noScribe_binaries = []
+noScribe_binaries += collect_dynamic_libs('av')
+noScribe_datas += collect_data_files('av')
 noScribe_hiddenimports = []
 
 noScribe_datas += [

@@ -49,8 +49,10 @@ noScribe_datas += copy_metadata('pyannote.database')
 noScribe_datas += copy_metadata('pyannote.metrics')
 noScribe_datas += copy_metadata('pyannote.pipeline')
 
-noScribe_binaries = [('../ffmpeg-linux-x86_64', '.')]
+noScribe_binaries = []
 noScribe_binaries += collect_dynamic_libs('pyannote')
+noScribe_binaries += collect_dynamic_libs('av')
+noScribe_datas += collect_data_files('av')
 
 noScribe_hiddenimports = ['PIL._tkinter_finder']
 noScribe_hiddenimports += ['PIL.ImageTk']

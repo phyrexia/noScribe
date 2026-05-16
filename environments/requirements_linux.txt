@@ -3,6 +3,7 @@
 torchaudio==2.8
 AdvancedHTMLParser
 appdirs
+av
 customtkinter
 CTkToolTip
 faster-whisper

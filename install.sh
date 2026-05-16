@@ -128,13 +128,6 @@ if [ "$OS" = "Linux" ]; then
     fi
 fi
 
-# --- ffmpeg ---
-if ! command -v ffmpeg >/dev/null 2>&1; then
-    warn "ffmpeg not found (required for audio processing)."
-    install_pkg ffmpeg
-fi
-ok "ffmpeg: $(ffmpeg -version 2>&1 | head -1)"
-
 # --- git-lfs (optional but preferred for model downloads) ---
 if ! command -v git-lfs >/dev/null 2>&1; then
     info "git-lfs not found. Installing (improves model downloads)..."

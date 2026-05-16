@@ -2,6 +2,7 @@
 # torchaudio # install as dependency
 AdvancedHTMLParser
 appdirs
+av
 cpufeature
 customtkinter
 CTkToolTip

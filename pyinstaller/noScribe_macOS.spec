@@ -51,24 +51,12 @@ noScribe_datas += copy_metadata('pyannote.database')
 noScribe_datas += copy_metadata('pyannote.metrics')
 noScribe_datas += copy_metadata('pyannote.pipeline')
 
-import os as _os, platform as _platform
-_spec_dir = _os.path.dirname(_os.path.abspath(SPEC))
-_root_dir = _os.path.dirname(_spec_dir)
-_ffmpeg_arm64 = _os.path.join(_root_dir, 'ffmpeg-arm64')
-_ffmpeg_x86   = _os.path.join(_root_dir, 'ffmpeg')
-_is_arm64 = _platform.machine() == 'arm64'
-
-# On arm64 Macs only bundle ffmpeg-arm64 (saves ~77 MB vs. bundling both).
-# Fall back to x86 ffmpeg if arm64 binary is missing (Rosetta2 will run it).
 noScribe_binaries = []
-if _is_arm64 and _os.path.exists(_ffmpeg_arm64):
-    noScribe_binaries += [('../ffmpeg-arm64', '.')]
-elif _os.path.exists(_ffmpeg_x86):
-    noScribe_binaries += [('../ffmpeg', '.')]
-
 noScribe_binaries += collect_dynamic_libs('pyannote')
 noScribe_binaries += collect_dynamic_libs('torchcodec')
+noScribe_binaries += collect_dynamic_libs('av')
 noScribe_datas += collect_data_files('torchcodec')
+noScribe_datas += collect_data_files('av')
 
 noScribe_hiddenimports = ['tkinter']
 noScribe_hiddenimports += collect_submodules('pyannote')
