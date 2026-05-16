@@ -40,6 +40,12 @@ def _pyannote_target(args, q):
     pyannote_proc_entrypoint(args, q)
 
 
+def _sherpa_diar_target(args, q):
+    """Wrapper that imports sherpa-onnx only inside the subprocess."""
+    from sherpa_diar_worker import sherpa_diar_proc_entrypoint
+    sherpa_diar_proc_entrypoint(args, q)
+
+
 def _whisper_target(args, q):
     """Wrapper that imports whisper only inside the subprocess."""
     from whisper_mp_worker import whisper_proc_entrypoint
@@ -127,6 +133,51 @@ def _run_voice_embed(job, app_dir, tmp_audio, log_fn, cancel_check, device_fn):
     except Exception as e:
         log_fn(f"Speaker DB match failed: {e}", 'info')
         return embedding, None, 0.0
+
+
+def _resolve_diar_backend() -> str:
+    """Pick which diarization backend to spawn.
+
+    Config key `diarization_backend`:
+      - 'pyannote'    (default) — torch + MPS pipeline
+      - 'sherpa-onnx'           — ONNX runtime, CoreML/CPU provider
+    Any unknown value falls back to 'pyannote' so default behaviour is
+    preserved unless the user opts in explicitly.
+    """
+    cfg = (get_config('diarization_backend', 'pyannote') or 'pyannote').lower()
+    if cfg in ('sherpa', 'sherpa-onnx', 'sherpa_onnx'):
+        return 'sherpa-onnx'
+    return 'pyannote'
+
+
+def _build_diar_args(job: TranscriptionJob, tmp_audio: str, backend: str,
+                     app_dir: str) -> tuple:
+    """Build (target_fn, args_dict) for the chosen diarization backend."""
+    if backend == 'sherpa-onnx':
+        args = {
+            "audio_path": tmp_audio,
+            "app_dir": app_dir,
+            "num_speakers": (int(job.speaker_detection)
+                             if str(job.speaker_detection).isdigit() else None),
+            "provider": (get_config('sherpa_diar_provider', 'cpu') or 'cpu').lower(),
+            "num_threads": int(get_config('sherpa_diar_threads', 4)),
+            "cluster_threshold": float(get_config('sherpa_diar_threshold', 0.5)),
+            "proxy_url": get_config('proxy_url', ''),
+            "ignore_ssl": True,
+        }
+        return _sherpa_diar_target, args
+
+    # Default: pyannote (existing behaviour, unchanged).
+    force_pyannote_cpu = get_config('force_pyannote_cpu', '').lower() == 'true'
+    args = {
+        "device": 'cpu' if force_pyannote_cpu else '',
+        "audio_path": tmp_audio,
+        "num_speakers": (int(job.speaker_detection)
+                         if str(job.speaker_detection).isdigit() else None),
+        "ignore_ssl": True,
+        "proxy_url": get_config('proxy_url', ''),
+    }
+    return _pyannote_target, args
 
 
 def _resolve_whisper_backend(job, app_dir: str) -> str:
@@ -268,18 +319,13 @@ def _diarize_and_transcribe_parallel(
     diar_start = time.time()
     trans_start = time.time()  # adjusted below; whisper drain starts now
 
-    # ── 1. Spawn pyannote subprocess ────────────────────────────────
-    force_pyannote_cpu = get_config('force_pyannote_cpu', '').lower() == 'true'
-    py_args = {
-        "device": 'cpu' if force_pyannote_cpu else '',
-        "audio_path": tmp_audio,
-        "num_speakers": (int(job.speaker_detection) if str(job.speaker_detection).isdigit() else None),
-        "ignore_ssl": True,
-        "proxy_url": get_config('proxy_url', ''),
-    }
+    # ── 1. Spawn diarization subprocess (pyannote or sherpa-onnx) ──
+    diar_backend = _resolve_diar_backend()
+    py_target, py_args = _build_diar_args(job, tmp_audio, diar_backend, app_dir)
+    log_fn(f"Diarization backend: {diar_backend}.", 'info')
     ctx = mp.get_context("spawn")
     py_q = ctx.Queue()
-    py_p = ctx.Process(target=_pyannote_target, args=(py_args, py_q))
+    py_p = ctx.Process(target=py_target, args=(py_args, py_q))
     py_p.start()
 
     # Shared state between the pyannote drain thread and the main thread.
@@ -307,10 +353,11 @@ def _diarize_and_transcribe_parallel(
                 mtype = msg.get("type")
                 if mtype == "log":
                     lvl = msg.get("level", "info")
-                    log_fn(f"[pyannote] {msg.get('msg', '')}", 'error' if lvl == 'error' else 'info')
+                    log_fn(f"[{diar_backend}] {msg.get('msg', '')}",
+                           'error' if lvl == 'error' else 'info')
                 elif mtype == "progress":
                     pct = msg.get("pct", 0)
-                    # Parallel: pyannote drives 5-50%; whisper drives 50-95.
+                    # Parallel: diarization drives 5-50%; whisper drives 50-95.
                     progress_fn(5 + int(pct * 0.45))
                 elif mtype == "device":
                     try:
@@ -328,9 +375,9 @@ def _diarize_and_transcribe_parallel(
                     else:
                         err = msg.get("error", "Diarization failed")
                         trace = msg.get("trace", "")
-                        log_fn(f"[pyannote] Error: {err}", 'error')
+                        log_fn(f"[{diar_backend}] Error: {err}", 'error')
                         if trace:
-                            log_fn(f"[pyannote] Traceback:\n{trace}", 'error')
+                            log_fn(f"[{diar_backend}] Traceback:\n{trace}", 'error')
                         py_state["error"] = err
                     return
         finally:
@@ -732,18 +779,14 @@ def run_transcription(
                     log_fn("Identifying speakers...", 'highlight')
                     job.status = JobStatus.SPEAKER_IDENTIFICATION
 
-                    force_pyannote_cpu = get_config('force_pyannote_cpu', '').lower() == 'true'
-                    args = {
-                        "device": 'cpu' if force_pyannote_cpu else '',  # '' = auto-detect MPS/CUDA
-                        "audio_path": tmp_audio,
-                        "num_speakers": (int(job.speaker_detection) if str(job.speaker_detection).isdigit() else None),
-                        "ignore_ssl": True,
-                        "proxy_url": get_config('proxy_url', ''),
-                    }
+                    diar_backend = _resolve_diar_backend()
+                    target_fn, args = _build_diar_args(job, tmp_audio,
+                                                       diar_backend, app_dir)
+                    log_fn(f"Diarization backend: {diar_backend}.", 'info')
 
                     ctx = mp.get_context("spawn")
                     q = ctx.Queue()
-                    p = ctx.Process(target=_pyannote_target, args=(args, q))
+                    p = ctx.Process(target=target_fn, args=(args, q))
                     p.start()
 
                     try:
@@ -761,7 +804,8 @@ def run_transcription(
                             mtype = msg.get("type")
                             if mtype == "log":
                                 lvl = msg.get("level", "info")
-                                log_fn(f"[pyannote] {msg.get('msg', '')}", 'error' if lvl == 'error' else 'info')
+                                log_fn(f"[{diar_backend}] {msg.get('msg', '')}",
+                                       'error' if lvl == 'error' else 'info')
                             elif mtype == "progress":
                                 pct = msg.get("pct", 0)
                                 progress_fn(5 + int(pct * 0.45))  # 5-50%
@@ -781,10 +825,10 @@ def run_transcription(
                                 else:
                                     err = msg.get("error", "Diarization failed")
                                     trace = msg.get("trace", "")
-                                    log_fn(f"[pyannote] Error: {err}", 'error')
+                                    log_fn(f"[{diar_backend}] Error: {err}", 'error')
                                     if trace:
-                                        log_fn(f"[pyannote] Traceback:\n{trace}", 'error')
-                                    raise Exception(f"[PYANNOTE] {err}")
+                                        log_fn(f"[{diar_backend}] Traceback:\n{trace}", 'error')
+                                    raise Exception(f"[DIAR:{diar_backend}] {err}")
                                 break
                     finally:
                         try:
