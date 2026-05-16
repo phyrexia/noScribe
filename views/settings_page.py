@@ -30,6 +30,7 @@ def build_settings_page(page: ft.Page, state: AppState) -> ft.Control:
         set_config('ignore_ssl', 'true' if ssl_cb.value else 'false')
         set_config('whisper_beam_size', int(beam_field.value or 1))
         set_config('auto_save', 'True' if autosave_cb.value else 'False')
+        set_config('diarization_backend', diar_backend_field.value or 'pyannote')
         save_config()
         page.show_dialog(ft.SnackBar(ft.Text("Settings saved.")))
 
@@ -91,6 +92,19 @@ def build_settings_page(page: ft.Page, state: AppState) -> ft.Control:
     autosave_cb = ft.Checkbox(
         label="Auto-save transcript during processing",
         value=get_config('auto_save', 'True') != 'False',
+    )
+
+    diar_backend_field = ft.Dropdown(
+        label="Diarization backend",
+        value=get_config('diarization_backend', 'pyannote'),
+        width=400,
+        options=[
+            ft.dropdown.Option("pyannote", "pyannote 3.1 (default, PyTorch/MPS)"),
+            ft.dropdown.Option(
+                "sherpa-onnx",
+                "sherpa-onnx (ONNX + CoreML/CPU, experimental)",
+            ),
+        ],
     )
 
     # ---- Network section ----
@@ -238,6 +252,7 @@ def build_settings_page(page: ft.Page, state: AppState) -> ft.Control:
             ft.Divider(height=8, color=ft.Colors.TRANSPARENT),
             beam_field,
             autosave_cb,
+            diar_backend_field,
             ft.Divider(height=16),
 
             # Network
