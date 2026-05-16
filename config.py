@@ -244,7 +244,7 @@ def detect_thread_count() -> int:
             cpu_count = int(check_output(["sysctl", "-n", "hw.logicalcpu_max"]))
         else:
             raise Exception("Unsupported mac architecture")
-        return int(cpu_count * 0.75)
+        return cpu_count
     else:
         raise Exception('Platform not supported yet.')
 

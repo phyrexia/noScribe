@@ -326,7 +326,8 @@ def run_transcription(
         job.status = JobStatus.TRANSCRIPTION
 
         force_cpu = get_config('force_whisper_cpu', '').lower() == 'true'
-        number_threads = int(get_config('threads', 4))
+        from config import detect_thread_count
+        number_threads = int(get_config('threads', detect_thread_count()))
 
         language_code = None
         from config import ALL_LANGUAGES
