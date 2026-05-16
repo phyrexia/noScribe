@@ -178,13 +178,17 @@ def _diarize_and_transcribe_parallel(
     cancel_check,
     speaker_naming_fn,
     device_fn,
+    backend: str = 'mlx',
 ):
-    """Run pyannote and MLX-whisper subprocesses concurrently.
+    """Run pyannote and whisper subprocesses concurrently.
 
-    MLX-whisper executes on the Metal GPU and pyannote on MPS + light CPU,
-    so the two can share the machine without thrashing. Whisper segments are
-    buffered until pyannote completes (we need the speaker timeline before
-    we can label them), then flushed in order.
+    Used for backends whose CPU footprint is light: MLX (Metal GPU) and
+    Apple Speech (ANE). Pyannote runs on MPS + minimal CPU, so the two
+    can coexist without thrashing. CT2 stays sequential because it
+    saturates the P-cores via `cpu_threads`.
+
+    Whisper segments are buffered until pyannote completes (we need the
+    speaker timeline before we can label them), then flushed in order.
 
     Returns:
       (diarization, embeddings, speaker_name_map, segments_data,
@@ -287,12 +291,21 @@ def _diarize_and_transcribe_parallel(
         "vad_threshold": job.vad_threshold,
         "locale": get_config('locale', 'en'),
     }
-    os.environ.pop("HF_HUB_OFFLINE", None)
-    os.environ.pop("TRANSFORMERS_OFFLINE", None)
-    log_fn("Using MLX (Metal GPU) whisper backend.", 'info')
+    if backend == 'mlx':
+        target = _mlx_whisper_target
+        os.environ.pop("HF_HUB_OFFLINE", None)
+        os.environ.pop("TRANSFORMERS_OFFLINE", None)
+        log_fn("Using MLX (Metal GPU) whisper backend.", 'info')
+    elif backend == 'apple-speech':
+        target = _apple_speech_target
+        log_fn("Using Apple Neural Engine whisper backend.", 'info')
+    else:
+        # Defensive fallback — should never hit because the dispatcher only
+        # picks the parallel path for ANE-friendly backends.
+        target = _whisper_target
 
     w_q = ctx.Queue()
-    w_p = ctx.Process(target=_mlx_whisper_target, args=(w_args, w_q))
+    w_p = ctx.Process(target=target, args=(w_args, w_q))
     w_p.start()
     trans_start = time.time()
 
@@ -564,11 +577,12 @@ def run_transcription(
                 cached_diarization = []
                 cached_embeddings = {}
 
-        # Decide orchestration mode. MLX runs on Metal GPU and pyannote on MPS+
-        # light CPU, so they can coexist. CT2 (CPU) is sequential because it
-        # already saturates the P-cores via `cpu_threads`.
+        # Decide orchestration mode. MLX (Metal GPU) and Apple Speech (ANE)
+        # both have light CPU footprints, so they can run concurrently with
+        # pyannote (MPS + light CPU). CT2 (CPU) is sequential because it
+        # saturates the P-cores via `cpu_threads`.
         run_parallel = (
-            backend == 'mlx'
+            backend in ('mlx', 'apple-speech')
             and need_pyannote
             and not cached_diarization
         )
@@ -579,7 +593,15 @@ def run_transcription(
         segments_data = []
 
         if run_parallel:
-            log_fn("Running diarization and transcription concurrently (MLX + pyannote).", 'highlight')
+            _backend_label = {
+                'mlx': 'MLX',
+                'apple-speech': 'Apple ANE',
+            }.get(backend, backend.upper())
+            log_fn(
+                f"Running diarization and transcription concurrently "
+                f"({_backend_label} + pyannote).",
+                'highlight',
+            )
             job.status = JobStatus.SPEAKER_IDENTIFICATION
             (diarization, embeddings, speaker_name_map, segments_data,
              diar_seconds, trans_seconds) = _diarize_and_transcribe_parallel(
@@ -591,6 +613,7 @@ def run_transcription(
                 cancel_check=cancel_check,
                 speaker_naming_fn=speaker_naming_fn,
                 device_fn=device_fn,
+                backend=backend,
             )
             timings['diarization'] = diar_seconds
             timings['transcription'] = trans_seconds
