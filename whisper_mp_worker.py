@@ -30,7 +30,7 @@ def whisper_proc_entrypoint(args: dict, q):
     try:
         # Import heavy libs only in the child process
 
-        from faster_whisper import WhisperModel
+        from faster_whisper import WhisperModel, BatchedInferencePipeline
         from faster_whisper.audio import decode_audio
         from faster_whisper.vad import VadOptions, get_speech_timestamps
         import torch
@@ -78,6 +78,8 @@ def whisper_proc_entrypoint(args: dict, q):
             cpu_threads=args.get("cpu_threads", 4),
             local_files_only=args.get("local_files_only", True),
         )
+        # Wrap with BatchedInferencePipeline for VAD-segmented batched decoding.
+        batched_model = BatchedInferencePipeline(model=model)
 
         # Define callbacks that forward to parent via queue (not used by faster-whisper directly, but kept for parity)
         def log_cb(level, msg):
@@ -140,19 +142,21 @@ def whisper_proc_entrypoint(args: dict, q):
             log_cb('error', t('err_loading_prompt') + '\n')
             prompt = ""
 
-        # Perform transcription (streaming)
-        segments, info = model.transcribe(
+        # Perform transcription via the batched pipeline.
+        # BatchedInferencePipeline processes VAD-segmented chunks in parallel
+        # (batch_size at a time) for ~4x throughput on CPU vs. sequential
+        # decoding. Segments are independent so condition_on_previous_text
+        # is not accepted/relevant for this code path.
+        segments, info = batched_model.transcribe(
             audio_path,
             language=whisper_lang,
             multilingual=multilingual,
             beam_size=args.get("beam_size", 5),
-            # temperature=args.get("temperature"),
             word_timestamps=args.get("word_timestamps", False),
-            condition_on_previous_text=False,
-            # initial_prompt=prompt,
             hotwords=prompt,
             vad_filter=args.get("vad_filter", True),
             vad_parameters=vad_parameters,
+            batch_size=int(args.get("batch_size", 8)),
         )
         
         log_cb('info', t('start_transcription') + '\n')

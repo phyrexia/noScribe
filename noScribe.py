@@ -3922,6 +3922,11 @@ class App(ctk.CTk):
         except Exception:
             vad_threshold = 0.5
 
+        try:
+            batch_size = int(get_config('whisper_batch_size', 8))
+        except Exception:
+            batch_size = 8
+
         args = {
             "model_name_or_path": job.whisper_model,
             "device": 'cpu' if force_whisper_cpu else 'auto',
@@ -3936,6 +3941,7 @@ class App(ctk.CTk):
             "word_timestamps": False,
             "vad_filter": True,
             "vad_threshold": vad_threshold,
+            "batch_size": batch_size,
             "locale": app_locale,
         }
 
