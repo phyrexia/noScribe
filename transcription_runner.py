@@ -330,6 +330,10 @@ def run_transcription(
             # MLX backend does its own model resolution via HF hub; local-only
             # flag is irrelevant.
             w_args["local_files_only"] = False
+            # MLX downloads from HF on first use — disable the offline gate the
+            # parent process set for pyannote/CT2.
+            os.environ.pop("HF_HUB_OFFLINE", None)
+            os.environ.pop("TRANSFORMERS_OFFLINE", None)
             log_fn("Using MLX (Metal GPU) whisper backend.", 'info')
         else:
             target = _whisper_target
