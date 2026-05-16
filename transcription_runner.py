@@ -40,6 +40,123 @@ def _pyannote_target(args, q):
     pyannote_proc_entrypoint(args, q)
 
 
+# ─── Voice-sample capture ───────────────────────────────────────────────────
+# Pre-slice up to 2 × 5 s WAV clips per detected speaker so the speaker-naming
+# dialog can attach them to a brand-new signature without making the user
+# wait for ffmpeg/pyav.
+
+_VOICE_SAMPLE_TARGET_MS = 5000
+
+
+def _pick_sample_windows(segs, target_ms=_VOICE_SAMPLE_TARGET_MS, max_clips=2):
+    """Return up to *max_clips* (start_ms, end_ms) windows ≥ target_ms each.
+
+    Falls back to the longest available segments when none are long enough;
+    callers can pad to *target_ms* with silence on disk.
+    """
+    if not segs:
+        return []
+    by_len = sorted(segs, key=lambda s: s["end"] - s["start"], reverse=True)
+    out = []
+    for s in by_len:
+        dur = s["end"] - s["start"]
+        if dur >= target_ms:
+            # Use a window centred on the segment so we avoid edge silence.
+            mid = (s["start"] + s["end"]) // 2
+            start = max(s["start"], mid - target_ms // 2)
+            end = start + target_ms
+            if end > s["end"]:
+                end = s["end"]
+                start = end - target_ms
+            out.append((int(start), int(end)))
+            if len(out) >= max_clips:
+                return out
+    # Fall back to longest segments (padding to target_ms via silence later)
+    for s in by_len:
+        if len(out) >= max_clips:
+            break
+        out.append((int(s["start"]), int(s["end"])))
+    return out
+
+
+def _pad_wav_to(path: str, target_ms: int) -> None:
+    """Pad a 16 kHz mono PCM-s16le WAV with trailing silence to target_ms."""
+    try:
+        import wave
+        with wave.open(path, 'rb') as r:
+            rate = r.getframerate()
+            channels = r.getnchannels()
+            sampwidth = r.getsampwidth()
+            frames = r.getnframes()
+            data = r.readframes(frames)
+        cur_ms = int((frames * 1000) / rate) if rate else 0
+        if cur_ms >= target_ms:
+            return
+        need_frames = int(((target_ms - cur_ms) / 1000.0) * rate)
+        silence = b"\x00" * (need_frames * channels * sampwidth)
+        with wave.open(path, 'wb') as w:
+            w.setnchannels(channels)
+            w.setsampwidth(sampwidth)
+            w.setframerate(rate)
+            w.writeframes(data + silence)
+    except Exception:
+        pass
+
+
+def _capture_voice_samples_async(plan, tmp_audio, log_fn):
+    """Spawn a daemon thread that slices WAV samples per pre-assigned UUID.
+
+    *plan* is a list of dicts: {uuid, windows: [(start_ms, end_ms), ...]}.
+    Each entry's ``done_event`` (threading.Event) is set when its WAVs are
+    written (or the attempt finished). The completed paths land in
+    ``entry['paths']`` (relative to the MeetingGenie config dir).
+    """
+    import threading
+    from audio.convert import ToWav
+
+    def _worker():
+        try:
+            import speaker_db
+            samples_dir = speaker_db._samples_dir()
+        except Exception:
+            log_fn("[samples] could not resolve samples dir; skipping capture", 'info')
+            for entry in plan:
+                entry['done_event'].set()
+            return
+
+        for entry in plan:
+            uid = entry['uuid']
+            windows = entry.get('windows') or []
+            written = []
+            for idx, (s_ms, e_ms) in enumerate(windows[:2], start=1):
+                out_path = os.path.join(samples_dir, f"{uid}_{idx}.wav")
+                try:
+                    with ToWav(tmp_audio, out_path,
+                               start_ms=int(s_ms), stop_ms=int(e_ms)) as conv:
+                        conv.run()
+                    if (e_ms - s_ms) < _VOICE_SAMPLE_TARGET_MS:
+                        _pad_wav_to(out_path, _VOICE_SAMPLE_TARGET_MS)
+                    if os.path.exists(out_path) and os.path.getsize(out_path) > 100:
+                        # Store path relative to config dir for portability.
+                        try:
+                            rel = os.path.relpath(
+                                out_path,
+                                os.path.dirname(samples_dir),
+                            )
+                            written.append(rel)
+                        except ValueError:
+                            written.append(out_path)
+                except Exception as ex:
+                    log_fn(f"[samples] {uid}_{idx} failed: {ex}", 'info')
+            entry['paths'] = written
+            entry['done_event'].set()
+        log_fn(f"[samples] capture finished ({len(plan)} speakers)", 'info')
+
+    t = threading.Thread(target=_worker, daemon=True)
+    t.start()
+    return t
+
+
 def _whisper_target(args, q):
     """Wrapper that imports whisper only inside the subprocess."""
     from whisper_mp_worker import whisper_proc_entrypoint
@@ -128,11 +245,15 @@ def _finalize_diarization_and_naming(
         'info',
     )
     if speaker_naming_fn and unique_speakers:
+        import threading as _threading
+        import uuid as _uuidmod
+
         speaker_segs_map = {}
         for seg in diarization:
             speaker_segs_map.setdefault(seg["label"], []).append(seg)
 
         speakers_data = []
+        capture_plan = []
         for lbl in unique_speakers:
             short = f'S{lbl[8:]}' if len(lbl) > 8 else lbl
             emb = embeddings.get(lbl)
@@ -146,6 +267,19 @@ def _finalize_diarization_and_naming(
             segs = speaker_segs_map.get(lbl, [])
             sorted_segs = sorted(segs, key=lambda s: s["end"] - s["start"], reverse=True)
             samples = [{"start": s["start"], "end": s["end"]} for s in sorted_segs[:2]]
+
+            # Pre-assign a UUID + sample-capture plan so the naming dialog can
+            # attach freshly-sliced WAVs immediately when a NEW signature is
+            # saved. The UUID is discarded if the user picks an existing match.
+            windows = _pick_sample_windows(segs)
+            plan_entry = {
+                'uuid': str(_uuidmod.uuid4()),
+                'windows': windows,
+                'paths': [],
+                'done_event': _threading.Event(),
+            }
+            capture_plan.append(plan_entry)
+
             speakers_data.append({
                 'label': lbl,
                 'short_label': short,
@@ -154,7 +288,15 @@ def _finalize_diarization_and_naming(
                 'similarity': sim,
                 'embedding': emb,
                 'samples': samples,
+                # Used by the naming dialog when persisting a NEW signature.
+                'pending_uuid': plan_entry['uuid'],
+                'sample_capture': plan_entry,
+                'source_file': os.path.basename(job.audio_file or ''),
             })
+
+        # Spawn the WAV slicer in the background — the user is now reading the
+        # naming dialog so there's plenty of time to write the clips.
+        _capture_voice_samples_async(capture_plan, tmp_audio, log_fn)
 
         try:
             result = speaker_naming_fn(speakers_data, tmp_audio)
