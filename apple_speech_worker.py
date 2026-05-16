@@ -16,6 +16,45 @@
 import os
 import threading
 import traceback
+import wave
+import contextlib
+
+
+# Punctuation that ends a sentence. Includes Spanish/English/East-Asian variants.
+_SENTENCE_TERMINATORS = (".", "?", "!", "…", "。", "？", "！")
+
+# Soft break punctuation (clause boundaries). When the buffer is long enough,
+# we treat these as acceptable flush points so the transcript reads as
+# chunked clauses instead of unbroken paragraphs — Apple Speech often omits
+# full stops on conversational audio but does insert commas/colons.
+_SOFT_BREAK_PUNCT = (",", ";", ":", "，", "；", "：")
+
+# Minimum words needed before a soft-break is allowed to flush. Prevents
+# tiny "yes,"/"no," fragments.
+_SOFT_BREAK_MIN_WORDS = 8
+
+# Hard cap on words per sentence — keeps un-punctuated streams readable.
+_MAX_WORDS_PER_SENTENCE = 30
+
+# Inter-word gap (seconds) that forces a sentence flush. Rarely fires because
+# SFSpeechRecognizer returns 0.0 timestamps on file-URL requests (see TODO
+# below), but kept as a safety net in case Apple ever fixes the bug.
+_GAP_FLUSH_SECONDS = 0.8
+
+
+def _read_wav_duration_seconds(path: str) -> float:
+    """Return the duration of a WAV file in seconds, or 0.0 on failure.
+
+    The transcription runner always decodes to 16 kHz mono WAV before invoking
+    a worker, so `wave` from the stdlib is sufficient — no extra deps needed.
+    """
+    try:
+        with contextlib.closing(wave.open(path, "rb")) as wf:
+            frames = wf.getnframes()
+            rate = wf.getframerate() or 1
+            return frames / float(rate)
+    except Exception:
+        return 0.0
 
 
 # ISO 639-1 → BCP-47 locale used by SFSpeechRecognizer. Apple has a fixed
@@ -66,6 +105,166 @@ def _map_locale(language_code: str) -> str:
         # Already looks like a BCP-47 identifier.
         return code.replace("_", "-")
     return LOCALE_MAP.get(code.lower(), "en-US")
+
+
+def _words_with_timestamps(raw_words, total_duration_s: float):
+    """Materialize {text, start, end} dicts from accumulated partial-result words.
+
+    `raw_words` is a list of `{"text": str, "_ts": float, "_dur": float}` dicts
+    captured while pumping partial results.
+
+    Apple Speech's `SFTranscriptionSegment.timestamp()` and `.duration()`
+    return 0.0 for every word when the request is built from a file URL — a
+    framework quirk documented at https://developer.apple.com/forums/thread/118325
+    (also reported as FB8961064). When at least half of the words have real
+    timestamps we use them; otherwise we synthesize by distributing words
+    uniformly across the known audio duration. The synthetic approximation is
+    coarse (it ignores silence and per-word variation) but sufficient for
+    pyannote's `find_speaker` to map each sentence onto a diarization slot,
+    since pyannote segments are typically multi-second.
+
+    TODO(apple-speech-timestamps): switch to real timestamps as soon as Apple
+    fixes SFSpeechRecognitionResult to populate `.timestamp()` for file URLs.
+    """
+    if not raw_words:
+        return []
+
+    real_ts_count = sum(1 for w in raw_words if w["_ts"] > 0.0)
+    use_real = real_ts_count >= max(1, int(0.5 * len(raw_words)))
+
+    if use_real:
+        return [
+            {
+                "text": w["text"],
+                "start": w["_ts"],
+                "end": w["_ts"] + max(w["_dur"], 0.0),
+            }
+            for w in raw_words
+        ]
+
+    if total_duration_s <= 0:
+        # Last resort: 0.5s/word so segments at least carry distinct,
+        # non-zero times — pyannote labeling will be approximate but consistent.
+        return [
+            {"text": w["text"], "start": i * 0.5, "end": (i + 1) * 0.5}
+            for i, w in enumerate(raw_words)
+        ]
+
+    N = len(raw_words)
+    per = total_duration_s / float(N)
+    return [
+        {"text": w["text"], "start": i * per, "end": (i + 1) * per}
+        for i, w in enumerate(raw_words)
+    ]
+
+
+def _join_words(buf):
+    """Pretty-print a list of word dicts as a sentence.
+
+    Apple Speech emits punctuation as standalone tokens (e.g. `["lado", ","]`),
+    so a naive space-join produces `"lado ,"`. We attach trailing punctuation
+    to the preceding word and strip the leading space for opening Spanish
+    punctuation (¿ ¡).
+    """
+    parts = []
+    for w in buf:
+        tok = w["text"]
+        if not tok:
+            continue
+        # Closing punctuation attaches to previous token.
+        if parts and tok and tok[0] in ",.;:?!…)»”’%":
+            parts[-1] = parts[-1] + tok
+        elif parts and parts[-1] and parts[-1][-1] in "¿¡(«“‘":
+            # Opening punctuation: don't insert a space between it and word.
+            parts[-1] = parts[-1] + tok
+        else:
+            parts.append(tok)
+    return " ".join(parts).strip()
+
+
+def _aggregate_sentences(words):
+    """Group word-level entries into sentence-level segments.
+
+    Flush conditions, in order of priority:
+      1. The current word ends with sentence-terminating punctuation
+         (`. ? ! …`). This is the strongest signal.
+      2. The current word is/ends with soft-break punctuation (`, ; :`) AND
+         the buffer already has at least _SOFT_BREAK_MIN_WORDS words. Apple
+         Speech on conversational audio frequently omits full stops but does
+         insert commas, so commas double as clause boundaries — without them
+         the transcript reads as huge unbroken paragraphs.
+      3. The inter-word gap to the next word exceeds _GAP_FLUSH_SECONDS.
+         Rarely fires because Apple Speech returns 0.0 timestamps on file
+         URLs (see `_words_with_timestamps`), but kept as a safety net.
+      4. The buffer reaches _MAX_WORDS_PER_SENTENCE (prevents unbounded
+         paragraphs when the recognizer omits punctuation entirely).
+    """
+    if not words:
+        return []
+
+    sentences = []
+    buf = []  # list of word dicts
+
+    def _flush():
+        if not buf:
+            return
+        text = _join_words(buf)
+        if not text:
+            buf.clear()
+            return
+        sentences.append({
+            "start": buf[0]["start"],
+            "end": buf[-1]["end"],
+            "text": text,
+        })
+        buf.clear()
+
+    def _flush_at_last_punct():
+        """If the buffer contains a soft-break token, flush up to and including
+        that token and keep the remainder in `buf`. Falls back to flushing the
+        whole buffer if no punctuation is found.
+        """
+        # Scan from the end so we cut as late as possible (closest to the cap).
+        for j in range(len(buf) - 1, max(_SOFT_BREAK_MIN_WORDS - 1, 0) - 1, -1):
+            tok = buf[j]["text"].rstrip()
+            if tok and tok[-1] in (_SENTENCE_TERMINATORS + _SOFT_BREAK_PUNCT):
+                head = buf[:j + 1]
+                tail = buf[j + 1:]
+                text = _join_words(head)
+                if text:
+                    sentences.append({
+                        "start": head[0]["start"],
+                        "end": head[-1]["end"],
+                        "text": text,
+                    })
+                buf.clear()
+                buf.extend(tail)
+                return
+        _flush()
+
+    for i, w in enumerate(words):
+        buf.append(w)
+        token = w["text"].rstrip()
+        last_char = token[-1] if token else ""
+        ends_sentence = last_char in _SENTENCE_TERMINATORS
+        is_soft_break = (
+            last_char in _SOFT_BREAK_PUNCT
+            and len(buf) >= _SOFT_BREAK_MIN_WORDS
+        )
+
+        next_gap = 0.0
+        if i + 1 < len(words):
+            next_gap = max(0.0, float(words[i + 1]["start"]) - float(w["end"]))
+
+        if ends_sentence or is_soft_break or next_gap > _GAP_FLUSH_SECONDS:
+            _flush()
+        elif len(buf) >= _MAX_WORDS_PER_SENTENCE:
+            # Hit the hard cap. Try to break at the last punctuation in the
+            # buffer so the cut lands on a clause boundary instead of mid-phrase.
+            _flush_at_last_punct()
+
+    _flush()
+    return sentences
 
 
 def _request_authorization(timeout_s: float = 60.0):
@@ -165,6 +364,10 @@ def apple_speech_proc_entrypoint(args: dict, q):
         url = NSURL.fileURLWithPath_(audio_path)
         request = Speech.SFSpeechURLRecognitionRequest.alloc().initWithURL_(url)
         request.setRequiresOnDeviceRecognition_(True)
+        # Partial results MUST be enabled: SFSpeechRecognizer processes audio
+        # in ~1-minute windows internally, and the final result only contains
+        # the LAST window's transcription. The full transcript is reconstructed
+        # by accumulating new words from each partial as it arrives.
         request.setShouldReportPartialResults_(True)
         try:
             # Dictation hint biases the model toward connected speech. Falls
@@ -172,45 +375,57 @@ def apple_speech_proc_entrypoint(args: dict, q):
             request.setTaskHint_(Speech.SFSpeechRecognitionTaskHintDictation)
         except Exception:
             pass
+        try:
+            # Automatic punctuation (macOS 13+/iOS 16+). Without this the
+            # recognizer returns a stream of un-capitalized words with no
+            # sentence boundaries, which makes the transcript unreadable and
+            # defeats the sentence aggregator below.
+            request.setAddsPunctuation_(True)
+        except Exception:
+            pass
+
+        # Audio duration — used to synthesize timestamps when Apple returns 0.0
+        # for every word (see TODO below in _extract_words).
+        total_duration_s = _read_wav_duration_seconds(audio_path)
+        if total_duration_s <= 0:
+            plog("info", "Could not determine audio duration; synthetic timestamps will be 0.")
+        else:
+            plog("debug", f"Audio duration: {total_duration_s:.2f}s")
 
         plog("info", f"Starting on-device Apple Speech recognition ({locale_id}).")
 
         done = threading.Event()
         state = {
-            "emitted": 0,        # number of segments already sent to the queue
-            "error": None,       # NSError → str
-            "final_segments": [],
-            "approx_duration": 0.0,
+            "error": None,               # NSError → str
+            "accumulated_words": [],     # raw word dicts collected across partials
+            "consumed": 0,               # index into the current partial's segments
         }
 
-        def _emit_new_segments(transcription, is_final: bool):
-            """Send segments[state['emitted']:] to the queue."""
-            segs = transcription.segments()
+        def _consume_partial(transcription):
+            """Append new segments from `transcription` to accumulated_words.
+
+            Each partial result re-emits the entire transcription-so-far, so we
+            slice from `state['consumed']` to capture only the new tail.
+            """
+            try:
+                segs = transcription.segments()
+            except Exception:
+                return
             if segs is None:
                 return
             count = segs.count() if hasattr(segs, "count") else len(segs)
-            for i in range(state["emitted"], count):
+            for i in range(state["consumed"], count):
                 seg = segs[i]
                 try:
                     text = str(seg.substring())
-                    start = float(seg.timestamp())
+                    ts = float(seg.timestamp())
                     dur = float(seg.duration())
                 except Exception:
                     continue
-                end = start + dur
-                state["approx_duration"] = max(state["approx_duration"], end)
-                try:
-                    q.put({
-                        "type": "segment",
-                        "segment": {"start": start, "end": end, "text": text},
-                    })
-                except Exception:
-                    pass
-                if is_final:
-                    state["final_segments"].append({
-                        "start": start, "end": end, "text": text,
-                    })
-            state["emitted"] = count
+                state["accumulated_words"].append({
+                    "text": text, "_ts": ts, "_dur": dur,
+                })
+            state["consumed"] = count
 
         def _result_handler(result, error):
             try:
@@ -224,9 +439,12 @@ def apple_speech_proc_entrypoint(args: dict, q):
                 if transcription is None:
                     return
                 is_final = bool(result.isFinal())
-                _emit_new_segments(transcription, is_final)
                 if is_final:
+                    # The final result resets to the last window only; ignore
+                    # its segments and rely on what we accumulated from partials.
                     done.set()
+                else:
+                    _consume_partial(transcription)
             except Exception as cb_err:
                 state["error"] = f"callback error: {cb_err}"
                 done.set()
@@ -262,15 +480,10 @@ def apple_speech_proc_entrypoint(args: dict, q):
                 except Exception:
                     pass
                 raise RuntimeError("Apple Speech recognition timed out (>1h).")
-            # Rough progress heuristic: ratio of last emitted segment end to
-            # the file's duration, if we have one. Otherwise nudge based on
-            # elapsed seconds.
-            pct = 0
-            if state["approx_duration"] > 0:
-                # We don't always know the total duration here; clamp to 95.
-                pct = min(95, int(state["approx_duration"] * 0.9))
-            else:
-                pct = min(90, int(elapsed))
+            # Rough progress heuristic based on elapsed wall-clock time —
+            # Apple Speech doesn't expose a per-file progress callback, so we
+            # clamp at 95% and let the post-processing step bump it to 100.
+            pct = min(95, int(elapsed))
             if pct != last_progress:
                 try:
                     q.put({"type": "progress", "pct": pct})
@@ -281,6 +494,33 @@ def apple_speech_proc_entrypoint(args: dict, q):
         if state["error"]:
             raise RuntimeError(f"Apple Speech error: {state['error']}")
 
+        raw_words = state["accumulated_words"]
+        if not raw_words:
+            raise RuntimeError("Apple Speech finished with no transcription words.")
+
+        # Synthesize timestamps if the framework returned 0.0 for every word
+        # (see _extract_words for the file-URL timestamp bug), then aggregate
+        # into sentence-level segments by punctuation.
+        words = _words_with_timestamps(raw_words, total_duration_s)
+        sentences = _aggregate_sentences(words)
+
+        plog("debug", f"Apple Speech emitted {len(sentences)} sentence(s) from {len(words)} word(s).")
+
+        for sent in sentences:
+            try:
+                q.put({
+                    "type": "segment",
+                    "segment": {
+                        "start": sent["start"],
+                        "end": sent["end"],
+                        "text": sent["text"],
+                    },
+                })
+            except Exception:
+                pass
+
+        approx_duration = sentences[-1]["end"] if sentences else total_duration_s
+
         try:
             q.put({"type": "progress", "pct": 100})
         except Exception:
@@ -289,7 +529,7 @@ def apple_speech_proc_entrypoint(args: dict, q):
         info_dict = {
             "language": locale_id,
             "language_probability": 1.0,
-            "duration": state["approx_duration"],
+            "duration": approx_duration,
         }
         try:
             q.put({"type": "result", "ok": True, "info": info_dict})
