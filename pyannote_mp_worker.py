@@ -161,7 +161,7 @@ def pyannote_proc_entrypoint(args: dict, q):
             })
 
         # ------------------------------------------------------------------
-        # Extract per-speaker voice embeddings so noScribe can match them
+        # Extract per-speaker voice embeddings so MeetingGenie can match them
         # against stored signatures for automatic speaker identification.
         # Wrapped in try/except so a failure here never blocks transcription.
         # ------------------------------------------------------------------

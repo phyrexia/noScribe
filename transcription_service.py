@@ -1,5 +1,5 @@
 # MeetingGenie - Transcription Service
-# Helper functions extracted from noScribe.py and interface for Flet migration.
+# Helper functions and interface for the Flet UI.
 #
 # Phase 0: standalone helpers (overlap_len, find_speaker, html helpers)
 # Phase 2: full _process_single_job migration with event bus callbacks

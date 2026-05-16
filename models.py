@@ -1,5 +1,5 @@
 # MeetingGenie - Transcription Job Models
-# Extracted from noScribe.py for clean architecture
+# Transcription job models for the Flet app
 
 import os
 import datetime

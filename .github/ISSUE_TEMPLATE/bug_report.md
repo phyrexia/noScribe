@@ -16,5 +16,5 @@ If applicable, add screenshots to help explain your problem.
 **System (please complete the following information):**
  - OS: [e.g. Windows 11/Linux Mint/macOS Sonoma]
  - On Windows: Normal or CUDA version?
- - noScribe Version: [e.g. 0.6] 
- - noScribe Settings: [Speaker identification on or off? Quality setting? etc.]
+ - MeetingGenie Version: [e.g. 1.0]
+ - MeetingGenie Settings: [Speaker identification on or off? Quality setting? etc.]

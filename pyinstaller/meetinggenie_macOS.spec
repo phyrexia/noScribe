@@ -2,7 +2,7 @@
 
 ############################################
 # MeetingGenie (Flet) – macOS build spec
-# Run from /noScribe/pyinstaller subdir!
+# Run from the pyinstaller/ subdir of the repo root.
 ############################################
 
 from PyInstaller.utils.hooks import collect_data_files
