@@ -356,7 +356,11 @@ def run_transcription(
                 mtype = msg.get("type")
                 if mtype == "device":
                     try:
-                        device_fn(msg.get("backend", ""), msg.get("label", ""))
+                        device_fn(
+                            msg.get("backend", ""),
+                            msg.get("label", "CPU"),
+                            role=msg.get("role", "transcription"),
+                        )
                     except Exception:
                         pass
                 elif mtype == "log":
@@ -365,15 +369,6 @@ def run_transcription(
                 elif mtype == "progress":
                     pct = msg.get("pct", 0)
                     progress_fn(50 + int(pct * 0.45))  # 50-95%
-                elif mtype == "device":
-                    try:
-                        device_fn(
-                            msg.get("backend", ""),
-                            msg.get("label", "CPU"),
-                            role=msg.get("role", "transcription"),
-                        )
-                    except Exception:
-                        pass
                 elif mtype == "finished":
                     continue
                 elif mtype == "segment":
