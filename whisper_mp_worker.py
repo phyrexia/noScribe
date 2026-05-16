@@ -162,6 +162,7 @@ def whisper_proc_entrypoint(args: dict, q):
             hotwords=prompt,
             vad_filter=args.get("vad_filter", True),
             vad_parameters=vad_parameters,
+            condition_on_previous_text=False,
         )
         
         log_cb('info', t('start_transcription') + '\n')
