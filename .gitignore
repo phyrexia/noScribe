@@ -52,3 +52,4 @@ test_live2.py
 
 # Downloaded models (large binaries)
 models/faster-whisper-*/
+.claude/

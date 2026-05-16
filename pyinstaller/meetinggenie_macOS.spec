@@ -66,18 +66,12 @@ mg_datas += collect_data_files('flet_desktop')
 # ---------------------------------------------------------------------------
 # Binaries
 # ---------------------------------------------------------------------------
-_ffmpeg_arm64 = _os.path.join(_root_dir, 'ffmpeg-arm64')
-_ffmpeg_x86   = _os.path.join(_root_dir, 'ffmpeg')
-_is_arm64 = _platform.machine() == 'arm64'
-
 mg_binaries = []
-if _is_arm64 and _os.path.exists(_ffmpeg_arm64):
-    mg_binaries += [('../ffmpeg-arm64', '.')]
-elif _os.path.exists(_ffmpeg_x86):
-    mg_binaries += [('../ffmpeg', '.')]
-
 mg_binaries += collect_dynamic_libs('pyannote')
 mg_binaries += collect_dynamic_libs('torchcodec')
+# PyAV ships libav dylibs in the av/ package.
+mg_binaries += collect_dynamic_libs('av')
+mg_datas += collect_data_files('av')
 
 # ---------------------------------------------------------------------------
 # Hidden imports

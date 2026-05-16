@@ -1,16 +1,14 @@
 # MeetingGenie - Transcription Runner
-# Standalone pipeline that runs ffmpeg → pyannote → whisper
+# Standalone pipeline that runs audio conversion → pyannote → whisper
 # Communicates via callbacks (log_fn, progress_fn) instead of self.logn()
 
 import os
 import platform
-import shlex
 import ssl
 import time
 import datetime
 import multiprocessing as mp
 import queue as pyqueue
-from subprocess import Popen, DEVNULL, STDOUT
 from tempfile import TemporaryDirectory
 from pathlib import Path
 
@@ -82,20 +80,6 @@ def _resolve_whisper_backend(job, app_dir: str) -> str:
     return 'ct2'
 
 
-def _find_ffmpeg(app_dir: str) -> str:
-    """Locate the ffmpeg binary for the current platform."""
-    if platform.system() == "Darwin":
-        arm64 = os.path.join(app_dir, 'ffmpeg-arm64')
-        if platform.machine() == "arm64" and os.path.exists(arm64):
-            return arm64
-        return os.path.join(app_dir, 'ffmpeg')
-    elif platform.system() == "Windows":
-        return os.path.join(app_dir, 'ffmpeg.exe')
-    elif platform.system() == "Linux":
-        return os.path.join(app_dir, 'ffmpeg-linux-x86_64')
-    raise Exception('Platform not supported.')
-
-
 def run_transcription(
     job: TranscriptionJob,
     app_dir: str,
@@ -129,36 +113,25 @@ def run_transcription(
         job.set_running()
         timings = {}
 
-        # ── 1. Audio conversion (ffmpeg) ─────────────────────────────
+        # ── 1. Audio conversion (PyAV) ───────────────────────────────
         t_step = time.time()
         log_fn("Converting audio...", 'highlight')
 
-        end_pos = f'-t {int(job.stop) - int(job.start)}ms' if int(job.stop) > 0 else ''
-        arguments = f' -loglevel warning -hwaccel auto -y -ss {job.start}ms -i "{job.audio_file}" {end_pos} -ar 16000 -ac 1 -c:a pcm_s16le "{tmp_audio}"'
-
-        ffmpeg_path = _find_ffmpeg(app_dir)
-        if platform.system() == 'Windows':
-            ffmpeg_cmd = ffmpeg_path + arguments
-        else:
-            ffmpeg_cmd = shlex.split(ffmpeg_path + arguments)
-
-        proc = Popen(ffmpeg_cmd, stdout=DEVNULL, stderr=STDOUT,
-                      universal_newlines=True, encoding='utf-8')
-        while True:
-            rc = proc.poll()
-            if rc is not None:
-                break
-            if cancel_check():
-                proc.terminate()
-                try:
-                    proc.wait(timeout=1)
-                except Exception:
-                    proc.kill()
-                raise Exception("Canceled by user")
-            time.sleep(0.1)
-
-        if proc.returncode and proc.returncode > 0:
-            raise Exception("FFmpeg conversion failed")
+        stop_ms = int(job.stop) if int(job.stop) > 0 else None
+        from audio import ToWav, AudioConversionCanceled, AudioConversionError
+        try:
+            with ToWav(
+                job.audio_file,
+                tmp_audio,
+                start_ms=int(job.start),
+                stop_ms=stop_ms,
+                should_cancel=cancel_check,
+            ) as conv:
+                conv.run()
+        except AudioConversionCanceled:
+            raise Exception("Canceled by user")
+        except AudioConversionError as e:
+            raise Exception(f"Audio conversion failed: {e}")
 
         timings['audio_conversion'] = time.time() - t_step
         log_fn(f"Audio conversion complete. ({timings['audio_conversion']:.0f}s)", 'info')

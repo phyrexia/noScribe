@@ -11,3 +11,4 @@ pyannote.audio>=4
 pyinstaller
 python-i18n
 PyYAML
+av

@@ -4,9 +4,8 @@
 #
 #  Steps:
 #    1. PyInstaller → dist/MeetingGenie.app
-#    2. Download ffmpeg-arm64 if missing
-#    3. Sign & notarize  (skipped if MG_SKIP_SIGN=1)
-#    4. Build .dmg       (skipped if MG_SKIP_DMG=1)
+#    2. Sign & notarize  (skipped if MG_SKIP_SIGN=1)
+#    3. Build .dmg       (skipped if MG_SKIP_DMG=1)
 #
 #  Required env vars for signing (or set MG_SKIP_SIGN=1):
 #    MG_IDENTITY, MG_APPLE_ID, MG_TEAM_ID, MG_APP_PASSWORD
@@ -28,10 +27,6 @@ VENV_DIR="${MG_VENV_DIR:-$ROOT_DIR/venv}"
 SKIP_SIGN="${MG_SKIP_SIGN:-0}"
 SKIP_DMG="${MG_SKIP_DMG:-0}"
 
-# ── ffmpeg arm64 ──────────────────────────────────────────────────────────────
-FFMPEG_ARM64="$ROOT_DIR/ffmpeg-arm64"
-FFMPEG_ARM64_URL="https://evermeet.cx/ffmpeg/getrelease/zip"
-
 # ── Helpers ───────────────────────────────────────────────────────────────────
 log()  { echo "▶ $*"; }
 die()  { echo "ERROR: $*" >&2; exit 1; }
@@ -44,27 +39,6 @@ hr
 [[ -d "$VENV_DIR" ]] || die "venv not found at $VENV_DIR – run: python3 -m venv $VENV_DIR && pip install -r environments/requirements_macOS.txt"
 command -v pyinstaller >/dev/null 2>&1 || source "$VENV_DIR/bin/activate"
 command -v pyinstaller >/dev/null 2>&1 || die "pyinstaller not found – activate the venv or install it"
-
-# ── Download ffmpeg-arm64 if missing ─────────────────────────────────────────
-if [[ ! -f "$FFMPEG_ARM64" ]]; then
-  log "Downloading ffmpeg arm64..."
-  TMP_ZIP=$(mktemp /tmp/ffmpeg-arm64-XXXX.zip)
-  TMP_DIR=$(mktemp -d /tmp/ffmpeg-arm64-XXXX)
-  if curl -fsSL "$FFMPEG_ARM64_URL" -o "$TMP_ZIP"; then
-    unzip -o "$TMP_ZIP" -d "$TMP_DIR" >/dev/null 2>&1 || true
-    FFMPEG_BIN=$(find "$TMP_DIR" -name "ffmpeg" -type f | head -1)
-    if [[ -n "$FFMPEG_BIN" ]]; then
-      cp "$FFMPEG_BIN" "$FFMPEG_ARM64"
-      chmod +x "$FFMPEG_ARM64"
-      log "ffmpeg-arm64 saved to $FFMPEG_ARM64"
-    else
-      log "WARNING: ffmpeg binary not found in zip – will use x86_64 ffmpeg (Rosetta2)"
-    fi
-  else
-    log "WARNING: could not download ffmpeg-arm64 – will use x86_64 ffmpeg (Rosetta2)"
-  fi
-  rm -rf "$TMP_DIR" "$TMP_ZIP"
-fi
 
 # ── Clean previous build ──────────────────────────────────────────────────────
 log "Cleaning previous build..."

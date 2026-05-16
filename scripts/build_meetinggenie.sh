@@ -36,26 +36,7 @@ if ! "$VENV_DIR/bin/pyinstaller" --version &>/dev/null; then
     "$PIP" install pyinstaller
 fi
 
-# --- 2. Download ffmpeg-arm64 if needed --------------------------------------
-FFMPEG="$ROOT_DIR/ffmpeg-arm64"
-if [ ! -f "$FFMPEG" ]; then
-    echo "--- Downloading ffmpeg-arm64 ---"
-    FFMPEG_URL="https://evermeet.cx/ffmpeg/getrelease/zip"
-    TMP_ZIP="/tmp/ffmpeg-arm64.zip"
-    curl -fSL "$FFMPEG_URL" -o "$TMP_ZIP" || {
-        echo "WARNING: ffmpeg download failed. Build will continue without native ffmpeg."
-        echo "You can manually place ffmpeg-arm64 in $ROOT_DIR"
-    }
-    if [ -f "$TMP_ZIP" ]; then
-        unzip -o "$TMP_ZIP" -d /tmp/ffmpeg-extract
-        mv /tmp/ffmpeg-extract/ffmpeg "$FFMPEG"
-        chmod +x "$FFMPEG"
-        rm -rf "$TMP_ZIP" /tmp/ffmpeg-extract
-        echo "✓ ffmpeg-arm64 downloaded"
-    fi
-fi
-
-# --- 3. Download fast model if not present -----------------------------------
+# --- 2. Download fast model if not present -----------------------------------
 FAST_MODEL="$ROOT_DIR/models/fast"
 if [ ! -d "$FAST_MODEL" ] || [ ! -f "$FAST_MODEL/model.bin" ]; then
     echo "--- Downloading fast model ---"
