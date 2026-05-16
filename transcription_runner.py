@@ -207,11 +207,11 @@ def _finalize_diarization_and_naming(
         for lbl in unique_speakers:
             short = f'S{lbl[8:]}' if len(lbl) > 8 else lbl
             emb = embeddings.get(lbl)
-            matched_name, sim = None, 0.0
+            matched_name, matched_uuid, sim = None, None, 0.0
             if emb:
                 try:
                     import speaker_db
-                    matched_name, sim = speaker_db.find_match(emb)
+                    matched_name, matched_uuid, sim = speaker_db.find_match(emb)
                 except Exception:
                     pass
             segs = speaker_segs_map.get(lbl, [])
@@ -221,6 +221,7 @@ def _finalize_diarization_and_naming(
                 'label': lbl,
                 'short_label': short,
                 'matched_name': matched_name,
+                'matched_uuid': matched_uuid,
                 'similarity': sim,
                 'embedding': emb,
                 'samples': samples,
