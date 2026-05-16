@@ -18,10 +18,15 @@ def mlx_whisper_proc_entrypoint(args: dict, q):
       {"type": "result", "ok": False, "error": str, "trace": str}
       {"type": "finished"}
     """
+    # MLX downloads from HuggingFace on first run. Override any offline gates
+    # the spawning module set at import-time.
+    os.environ.pop("HF_HUB_OFFLINE", None)
+    os.environ.pop("TRANSFORMERS_OFFLINE", None)
+
     # Publish the active backend immediately so the UI device badge reflects
     # the real whisper backend before model loading begins.
     try:
-        q.put({"type": "device", "backend": "mlx-metal", "label": "Metal GPU (MLX)"})
+        q.put({"type": "device", "role": "transcription", "backend": "mlx-metal", "label": "Metal GPU (MLX)"})
     except Exception:
         pass
 
