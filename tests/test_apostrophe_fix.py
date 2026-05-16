@@ -8,7 +8,7 @@ import html
 import sys
 import os
 
-# Add parent dir to path so we can import from noScribe.py
+# Add parent dir to path so we can import from the repo root.
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 
 import AdvancedHTMLParser
@@ -16,14 +16,14 @@ import utils
 
 
 def _build_doc_with_text(text: str) -> AdvancedHTMLParser.AdvancedHTMLParser:
-    """Simulate how noScribe builds the HTML DOM with transcript text."""
+    """Simulate how MeetingGenie builds the HTML DOM with transcript text."""
     d = AdvancedHTMLParser.AdvancedHTMLParser()
     d.parseStr('<html><body></body></html>')
 
     p = d.createElement('p')
     d.body.appendChild(p)
 
-    # This mirrors line 2859 + 2922-2923 of noScribe.py (after the fix)
+    # This mirrors the HTML segment construction in transcription_runner (after the apostrophe fix).
     seg_html = html.escape(text, quote=False)
     a_html = f'<a name="ts_0_1000_S01" >{seg_html}</a>'
     a = d.createElementFromHTML(a_html)
@@ -33,7 +33,7 @@ def _build_doc_with_text(text: str) -> AdvancedHTMLParser.AdvancedHTMLParser:
 
 
 def _html_node_to_text(node) -> str:
-    """Mirrors the html_node_to_text function from noScribe.py (line 349)."""
+    """Mirrors the html_node_to_text helper used during transcription export."""
     if AdvancedHTMLParser.isTextNode(node):
         return html.unescape(node)
     elif AdvancedHTMLParser.isTagNode(node):
@@ -47,7 +47,7 @@ def _html_node_to_text(node) -> str:
 
 
 def _vtt_escape(txt: str) -> str:
-    """Mirrors vtt_escape from noScribe.py (line 379) after the fix."""
+    """Mirrors vtt_escape used during VTT export (after the apostrophe fix)."""
     txt = html.escape(txt, quote=False)
     while txt.find('\n\n') > -1:
         txt = txt.replace('\n\n', '\n')

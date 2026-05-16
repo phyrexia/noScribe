@@ -1,5 +1,5 @@
 # MeetingGenie - Configuration Management
-# Extracted from noScribe.py for clean architecture
+# Centralised configuration for the Flet app
 
 import os
 import platform

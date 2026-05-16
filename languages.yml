@@ -1,11 +1,11 @@
-# noScribe – Transcription Language List
+# MeetingGenie – Transcription Language List
 # ----------------------------------------
 # Each uncommented line enables that language in the dropdown menu.
 # To hide a language, add '#' at the beginning of the line.
-# This file is NEVER rewritten by noScribe, so your edits are safe.
+# This file is NEVER rewritten by MeetingGenie, so your edits are safe.
 #
 # Tip: keep only the languages you actually use to shorten the list.
-# 'Auto' lets noScribe detect the language automatically (recommended).
+# 'Auto' lets MeetingGenie detect the language automatically (recommended).
 # 'Multilingual' is an experimental mode for mixed-language recordings.
 
 - Auto

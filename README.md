@@ -23,7 +23,7 @@
 
 ### macOS (Apple Silicon)
 
-1. **Download** `MeetingGenie.dmg` from [Releases](https://github.com/phyrexia/noScribe/releases)
+1. **Download** `MeetingGenie.dmg` from the [Releases](https://github.com/phyrexia/MeetingGenie/releases) page
 2. **Drag** MeetingGenie.app to Applications
 3. **Open** and start transcribing
 
@@ -31,8 +31,8 @@
 
 ```bash
 # Clone
-git clone https://github.com/phyrexia/noScribe.git
-cd noScribe
+git clone https://github.com/phyrexia/MeetingGenie.git
+cd MeetingGenie
 
 # Create venv (outside OneDrive/cloud sync)
 python3 -m venv ~/.meetinggenie-venv

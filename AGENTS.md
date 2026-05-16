@@ -1,1 +1,1 @@
-Main app is in noScribe.py
+Main app is in main.py (Flet UI under views/).
