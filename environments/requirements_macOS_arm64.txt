@@ -15,4 +15,7 @@ PyYAML
 soundfile
 # macOS-only: Metal-accelerated Whisper via Apple MLX
 mlx-whisper
+# Optional alternative diarization backend (ONNX + CoreML/CPU). Default is
+# still pyannote; enable via Settings → "Diarization backend: sherpa-onnx".
+sherpa-onnx
 av
