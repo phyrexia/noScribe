@@ -47,6 +47,41 @@ def _whisper_target(args, q):
     whisper_proc_entrypoint(args, q)
 
 
+def _mlx_whisper_target(args, q):
+    """Wrapper that imports mlx-whisper only inside the subprocess."""
+    from mlx_whisper_worker import mlx_whisper_proc_entrypoint
+    mlx_whisper_proc_entrypoint(args, q)
+
+
+def _resolve_whisper_backend(job, app_dir: str) -> str:
+    """Pick which whisper backend to spawn.
+
+    Resolution order:
+      1. Explicit config setting `whisper_backend` ∈ {'ct2', 'mlx'}.
+      2. 'auto' (or missing): look up `job.whisper_model`'s tier in
+         `model_manager.MODELS`. If the tier reports `backend == 'mlx'`
+         use MLX; otherwise CT2. On Apple Silicon, an unknown tier
+         (e.g. raw filesystem path) defaults to CT2 for compatibility.
+    """
+    cfg = (get_config('whisper_backend', 'auto') or 'auto').lower()
+    if cfg in ('ct2', 'mlx'):
+        return cfg
+
+    # Try to map job.whisper_model back to a tier — it may be either a
+    # tier key, an HF repo id, or a resolved filesystem path.
+    candidate = str(job.whisper_model or '')
+    for tier, entry in model_manager.MODELS.items():
+        if candidate == tier:
+            return entry.get('backend', 'ct2')
+        if entry.get('backend') == 'mlx' and candidate == entry.get('hf_repo'):
+            return 'mlx'
+        # Path may end with the tier name (CT2 local dir).
+        if entry.get('backend') == 'ct2' and candidate.rstrip('/').endswith(f"/{tier}"):
+            return 'ct2'
+
+    return 'ct2'
+
+
 def _find_ffmpeg(app_dir: str) -> str:
     """Locate the ffmpeg binary for the current platform."""
     if platform.system() == "Darwin":
@@ -76,6 +111,7 @@ def run_transcription(
     progress_fn(pct)            — 0-100
     cancel_check()              — returns True if user requested cancel
     speaker_naming_fn(speakers_data, audio_path) — returns {label: name} map, or None to skip
+    device_fn(backend, label)   — notified when the worker publishes its compute device
     """
     if log_fn is None:
         log_fn = lambda text, level='info': print(f"[{level}] {text}")
@@ -314,9 +350,19 @@ def run_transcription(
             "locale": get_config('locale', 'en'),
         }
 
+        backend = _resolve_whisper_backend(job, app_dir)
+        if backend == 'mlx':
+            target = _mlx_whisper_target
+            # MLX backend does its own model resolution via HF hub; local-only
+            # flag is irrelevant.
+            w_args["local_files_only"] = False
+            log_fn("Using MLX (Metal GPU) whisper backend.", 'info')
+        else:
+            target = _whisper_target
+
         ctx = mp.get_context("spawn")
         q = ctx.Queue()
-        p = ctx.Process(target=_whisper_target, args=(w_args, q))
+        p = ctx.Process(target=target, args=(w_args, q))
         p.start()
 
         # Each segment: {"text": str, "start_ms": int, "end_ms": int, "speaker": str}
@@ -334,7 +380,12 @@ def run_transcription(
                     continue
 
                 mtype = msg.get("type")
-                if mtype == "log":
+                if mtype == "device":
+                    try:
+                        device_fn(msg.get("backend", ""), msg.get("label", ""))
+                    except Exception:
+                        pass
+                elif mtype == "log":
                     lvl = msg.get("level", "info")
                     log_fn(f"[whisper] {msg.get('msg', '')}", 'error' if lvl == 'error' else 'info')
                 elif mtype == "progress":
@@ -349,6 +400,8 @@ def run_transcription(
                         )
                     except Exception:
                         pass
+                elif mtype == "finished":
+                    continue
                 elif mtype == "segment":
                     seg = msg.get("segment", {})
                     text = seg.get("text", "").strip()

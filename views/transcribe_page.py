@@ -343,6 +343,20 @@ def build_transcribe_page(page: ft.Page, state: AppState) -> ft.Control:
             except Exception:
                 pass
 
+        def device_fn(backend, label):
+            try:
+                if backend == 'mlx-metal':
+                    state.compute_device = 'metal'
+                elif backend == 'cuda':
+                    state.compute_device = 'cuda'
+                elif backend == 'cpu':
+                    state.compute_device = 'cpu'
+                state.bus.publish(EventType.DEVICE_UPDATE, {
+                    "backend": backend, "label": label,
+                })
+            except Exception:
+                pass
+
         try:
             def device_fn(backend, label, role=None):
                 state.update_compute_device(backend, label, role=role or "transcription")
