@@ -54,6 +54,68 @@ class AppState:
             'transcription': '',
         }
 
+        # Persistent worker pool (whisper-CT2). Lazily started on first job
+        # via ensure_whisper_pool(). Stays alive for the rest of the session.
+        self.whisper_pool = None
+        self._whisper_pool_signature: tuple | None = None
+
+    def ensure_whisper_pool(self, model_path: str, *,
+                            compute_type: str = 'int8',
+                            cpu_threads: int = 4,
+                            force_cpu: bool = False,
+                            locale: str = 'en'):
+        """Start (or restart) the persistent whisper worker pool.
+
+        The pool is keyed on model path + compute_type + device. If the
+        caller asks for a different config, we shut the old one down and
+        spawn a fresh one. Returns the (alive) WorkerPool or None on
+        failure — callers must treat None as "fall back to spawn-per-job".
+        """
+        from worker_pool import WorkerPool
+        from whisper_mp_worker import whisper_pool_entrypoint
+
+        sig = (model_path, compute_type, cpu_threads, bool(force_cpu), locale)
+        if self.whisper_pool is not None:
+            if self._whisper_pool_signature == sig and self.whisper_pool.is_alive():
+                return self.whisper_pool
+            # config drifted or pool died — tear down before respawning
+            try:
+                self.whisper_pool.shutdown(timeout=1.0)
+            except Exception:
+                pass
+            self.whisper_pool = None
+            self._whisper_pool_signature = None
+
+        init_args = {
+            "model_name_or_path": model_path,
+            "device": 'cpu' if force_cpu else 'auto',
+            "compute_type": compute_type,
+            "cpu_threads": cpu_threads,
+            "local_files_only": True,
+            "locale": locale,
+        }
+        pool = WorkerPool(whisper_pool_entrypoint, init_args, name="ct2")
+        try:
+            ok = pool.start(timeout=180.0)
+        except Exception as e:
+            print(f"[app_state] whisper pool start failed: {e}")
+            ok = False
+        if not ok:
+            return None
+        self.whisper_pool = pool
+        self._whisper_pool_signature = sig
+        return pool
+
+    def shutdown_pools(self):
+        """Called on app exit. Terminates any live pool workers."""
+        if self.whisper_pool is not None:
+            try:
+                self.whisper_pool.shutdown(timeout=2.0)
+            except Exception:
+                pass
+            self.whisper_pool = None
+            self._whisper_pool_signature = None
+
     def _detect_device(self) -> str:
         """Initial compute device placeholder.
 
