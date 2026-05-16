@@ -344,6 +344,9 @@ def build_transcribe_page(page: ft.Page, state: AppState) -> ft.Control:
                 pass
 
         try:
+            def device_fn(backend, label, role=None):
+                state.update_compute_device(backend, label)
+
             run_transcription(
                 job=job,
                 app_dir=state.app_dir,
@@ -351,6 +354,7 @@ def build_transcribe_page(page: ft.Page, state: AppState) -> ft.Control:
                 progress_fn=progress_fn,
                 cancel_check=lambda: state.cancel,
                 speaker_naming_fn=speaker_naming_fn,
+                device_fn=device_fn,
             )
             # Notify editor to open transcript
             if job.transcript_file and os.path.exists(job.transcript_file):
