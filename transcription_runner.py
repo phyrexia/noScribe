@@ -68,6 +68,7 @@ def run_transcription(
     progress_fn=None,
     cancel_check=None,
     speaker_naming_fn=None,
+    device_fn=None,
 ):
     """Run a full transcription pipeline for one job.
 
@@ -82,6 +83,8 @@ def run_transcription(
         progress_fn = lambda pct: None
     if cancel_check is None:
         cancel_check = lambda: False
+    if device_fn is None:
+        device_fn = lambda backend, label, role=None: None
 
     tmpdir = TemporaryDirectory('MeetingGenie')
     tmp_audio = os.path.join(tmpdir.name, 'tmp_audio.wav')
@@ -328,6 +331,15 @@ def run_transcription(
                 elif mtype == "progress":
                     pct = msg.get("pct", 0)
                     progress_fn(50 + int(pct * 0.45))  # 50-95%
+                elif mtype == "device":
+                    try:
+                        device_fn(
+                            msg.get("backend", ""),
+                            msg.get("label", "CPU"),
+                            role=msg.get("role", "transcription"),
+                        )
+                    except Exception:
+                        pass
                 elif mtype == "segment":
                     seg = msg.get("segment", {})
                     text = seg.get("text", "").strip()

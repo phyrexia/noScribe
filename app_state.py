@@ -4,7 +4,7 @@
 import os
 from models import TranscriptionQueue
 from config import get_config, set_config, save_config, load_languages, config_dir
-from event_bus import EventBus
+from event_bus import EventBus, EventType
 
 
 class AppState:
@@ -39,28 +39,49 @@ class AppState:
         # Last generated summary
         self.last_summary_path: str = ""
 
-        # Compute device indicator (updated by workers)
+        # Compute device indicator — updated by workers at runtime.
+        # Initial value is a safe default; the actual backend is reported
+        # by the whisper worker once it starts.
         self.compute_device: str = self._detect_device()
+        self.compute_device_label: str = "CPU"
+        self.compute_backend: str = ""
 
     def _detect_device(self) -> str:
-        """Detect available compute device without importing torch."""
-        import platform
-        if platform.system() == "Darwin" and platform.machine() == "arm64":
-            return "metal"
-        # Can't check CUDA without importing torch, default to cpu
+        """Initial compute device placeholder.
+
+        Workers will report the real backend once they start. We do NOT
+        claim Metal here just because the host is Apple Silicon — the
+        CT2 whisper backend runs on CPU regardless.
+        """
         return "cpu"
 
+    def update_compute_device(self, backend: str, label: str):
+        """Called when a worker reports its actual compute backend.
+
+        backend: 'ct2-cpu' | 'mlx-metal' | 'cuda' | ...
+        label: human-readable string for the badge.
+        """
+        self.compute_backend = backend or ""
+        self.compute_device_label = label or "CPU"
+        if backend == "cuda":
+            self.compute_device = "cuda"
+        elif backend == "mlx-metal":
+            self.compute_device = "metal"
+        else:
+            self.compute_device = "cpu"
+        try:
+            self.bus.publish(EventType.DEVICE_UPDATE, {
+                "backend": self.compute_backend,
+                "label": self.compute_device_label,
+            })
+        except Exception:
+            pass
+
     def get_device_label(self) -> str:
-        d = self.compute_device
-        if d == "metal":
-            return "Metal GPU"
-        elif d == "cuda":
-            return "NVIDIA GPU"
-        return "CPU"
+        return self.compute_device_label
 
     def get_device_icon_name(self) -> str:
-        d = self.compute_device
-        if d in ("metal", "cuda"):
+        if self.compute_backend in ("mlx-metal", "cuda"):
             return "memory"  # chip icon
         return "computer"
 

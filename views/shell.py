@@ -3,11 +3,30 @@
 
 import flet as ft
 from app_state import AppState
+from event_bus import EventType
 
 
 # Brand colours
 BRAND_BLUE = "#0A84FF"
 BRAND_BLUE_DARK = "#0066CC"
+
+
+def _is_accelerated(backend: str) -> bool:
+    return backend in ("mlx-metal", "cuda")
+
+
+def _build_badge_content(state: AppState) -> ft.Row:
+    accel = _is_accelerated(state.compute_backend)
+    color = "#4CAF50" if accel else ft.Colors.ON_SURFACE_VARIANT
+    icon = ft.Icons.MEMORY if accel else ft.Icons.COMPUTER
+    return ft.Row([
+        ft.Icon(icon, size=14, color=color),
+        ft.Text(state.compute_device_label, size=11, color=color),
+    ], spacing=4, tight=True)
+
+
+def _badge_border_color(state: AppState):
+    return "#4CAF50" if _is_accelerated(state.compute_backend) else ft.Colors.OUTLINE_VARIANT
 
 
 def build_shell(page: ft.Page, state: AppState, pages: dict[str, ft.Control]):
@@ -35,6 +54,24 @@ def build_shell(page: ft.Page, state: AppState, pages: dict[str, ft.Control]):
         on_click=toggle_theme,
     )
 
+    # --- Compute device badge ----------------------------------------
+    device_badge = ft.Container(
+        content=_build_badge_content(state),
+        border=ft.border.all(1, _badge_border_color(state)),
+        border_radius=12,
+        padding=ft.padding.symmetric(horizontal=8, vertical=3),
+    )
+
+    def _on_device_update(_payload):
+        device_badge.content = _build_badge_content(state)
+        device_badge.border = ft.border.all(1, _badge_border_color(state))
+        try:
+            device_badge.update()
+        except Exception:
+            pass
+
+    state.bus.subscribe(EventType.DEVICE_UPDATE, _on_device_update)
+
     # --- Header --------------------------------------------------------
     header = ft.Container(
         content=ft.Row(
@@ -48,23 +85,7 @@ def build_shell(page: ft.Page, state: AppState, pages: dict[str, ft.Control]):
                             weight=ft.FontWeight.BOLD,
                             color=BRAND_BLUE,
                         ),
-                        ft.Container(
-                            content=ft.Row([
-                                ft.Icon(
-                                    ft.Icons.MEMORY if state.compute_device in ("metal", "cuda") else ft.Icons.COMPUTER,
-                                    size=14,
-                                    color="#4CAF50" if state.compute_device in ("metal", "cuda") else ft.Colors.ON_SURFACE_VARIANT,
-                                ),
-                                ft.Text(
-                                    state.get_device_label(),
-                                    size=11,
-                                    color="#4CAF50" if state.compute_device in ("metal", "cuda") else ft.Colors.ON_SURFACE_VARIANT,
-                                ),
-                            ], spacing=4, tight=True),
-                            border=ft.border.all(1, "#4CAF50" if state.compute_device in ("metal", "cuda") else ft.Colors.OUTLINE_VARIANT),
-                            border_radius=12,
-                            padding=ft.padding.symmetric(horizontal=8, vertical=3),
-                        ),
+                        device_badge,
                     ],
                     spacing=8,
                 ),

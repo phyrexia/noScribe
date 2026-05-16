@@ -17,6 +17,7 @@ class EventType(Enum):
     LIVE_FINISHED = "live_finished"             # {}
     MODEL_DOWNLOAD_PROGRESS = "model_dl_progress"  # {bytes, total}
     SPEAKER_NAMING_REQUEST = "speaker_naming"   # {speakers_data, future}
+    DEVICE_UPDATE = "device_update"             # {backend, label}
 
 
 class EventBus:

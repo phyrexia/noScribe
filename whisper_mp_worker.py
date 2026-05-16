@@ -69,7 +69,17 @@ def whisper_proc_entrypoint(args: dict, q):
                     device = 'cpu'
             else:
                 raise Exception('Platform not supported yet.')
-            
+
+        # Report actual compute device to parent so the UI can show a
+        # truthful badge. The CT2 backend is CPU-only on macOS.
+        try:
+            if device == 'cuda':
+                q.put({"type": "device", "backend": "cuda", "label": "NVIDIA GPU"})
+            else:
+                q.put({"type": "device", "backend": "ct2-cpu", "label": "CPU"})
+        except Exception:
+            pass
+
         # Build model in child using provided options
         model = WhisperModel(
             args["model_name_or_path"],
