@@ -377,6 +377,22 @@ def build_transcribe_page(page: ft.Page, state: AppState) -> ft.Control:
             def device_fn(backend, label, role=None):
                 state.update_compute_device(backend, label, role=role or "transcription")
 
+            # Lazy-start the persistent whisper pool. Only applies to the
+            # CT2 backend; MLX is skipped and falls back to spawn.
+            whisper_pool = None
+            try:
+                from config import detect_thread_count
+                whisper_pool = state.ensure_whisper_pool(
+                    model_path=job.whisper_model,
+                    compute_type=job.whisper_compute_type,
+                    cpu_threads=int(get_config('threads', detect_thread_count())),
+                    force_cpu=get_config('force_whisper_cpu', '').lower() == 'true',
+                    locale=get_config('locale', 'en'),
+                )
+            except Exception as _pe:
+                # Pool is purely an optimization — never let it block a job.
+                whisper_pool = None
+
             run_transcription(
                 job=job,
                 app_dir=state.app_dir,
@@ -385,6 +401,7 @@ def build_transcribe_page(page: ft.Page, state: AppState) -> ft.Control:
                 cancel_check=lambda: state.cancel,
                 speaker_naming_fn=speaker_naming_fn,
                 device_fn=device_fn,
+                whisper_pool=whisper_pool,
             )
             # Notify editor to open transcript
             if job.transcript_file and os.path.exists(job.transcript_file):

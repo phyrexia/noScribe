@@ -86,6 +86,15 @@ def main(page: ft.Page):
     # --- App state -----------------------------------------------------
     state = AppState(app_dir)
 
+    # Shut down any persistent worker subprocesses when the Flet window
+    # closes. Flet calls on_disconnect when the user quits the app.
+    def _on_disconnect(_e):
+        try:
+            state.shutdown_pools()
+        except Exception:
+            pass
+    page.on_disconnect = _on_disconnect
+
     # --- Build pages ---------------------------------------------------
     pages = {
         "transcribe": build_transcribe_page(page, state),
