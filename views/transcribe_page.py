@@ -343,6 +343,20 @@ def build_transcribe_page(page: ft.Page, state: AppState) -> ft.Control:
             except Exception:
                 pass
 
+        def device_fn(backend, label):
+            try:
+                if backend == 'mlx-metal':
+                    state.compute_device = 'metal'
+                elif backend == 'cuda':
+                    state.compute_device = 'cuda'
+                elif backend == 'cpu':
+                    state.compute_device = 'cpu'
+                state.bus.publish(EventType.DEVICE_UPDATE, {
+                    "backend": backend, "label": label,
+                })
+            except Exception:
+                pass
+
         try:
             run_transcription(
                 job=job,
@@ -351,6 +365,7 @@ def build_transcribe_page(page: ft.Page, state: AppState) -> ft.Control:
                 progress_fn=progress_fn,
                 cancel_check=lambda: state.cancel,
                 speaker_naming_fn=speaker_naming_fn,
+                device_fn=device_fn,
             )
             # Notify editor to open transcript
             if job.transcript_file and os.path.exists(job.transcript_file):
