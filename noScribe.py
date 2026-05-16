@@ -3949,7 +3949,7 @@ class App(ctk.CTk):
             "language_name": job.language_name,
             "language_code": language_code,
             "disfluencies": job.disfluencies,
-            "beam_size": 5,
+            "beam_size": job.whisper_beam_size,
             "word_timestamps": True,
             "vad_filter": True,
             "vad_threshold": vad_threshold,
