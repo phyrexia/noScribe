@@ -52,18 +52,26 @@ def _mlx_whisper_target(args, q):
     mlx_whisper_proc_entrypoint(args, q)
 
 
+def _apple_speech_target(args, q):
+    """Wrapper that imports the Apple Speech worker only in the subprocess."""
+    from apple_speech_worker import apple_speech_proc_entrypoint
+    apple_speech_proc_entrypoint(args, q)
+
+
 def _resolve_whisper_backend(job, app_dir: str) -> str:
     """Pick which whisper backend to spawn.
 
     Resolution order:
-      1. Explicit config setting `whisper_backend` ∈ {'ct2', 'mlx'}.
+      1. Explicit config setting `whisper_backend` ∈ {'ct2', 'mlx',
+         'apple-speech'}.
       2. 'auto' (or missing): look up `job.whisper_model`'s tier in
          `model_manager.MODELS`. If the tier reports `backend == 'mlx'`
-         use MLX; otherwise CT2. On Apple Silicon, an unknown tier
+         use MLX; `apple-speech` for the Apple Neural Engine tier;
+         otherwise CT2. On Apple Silicon, an unknown tier
          (e.g. raw filesystem path) defaults to CT2 for compatibility.
     """
     cfg = (get_config('whisper_backend', 'auto') or 'auto').lower()
-    if cfg in ('ct2', 'mlx'):
+    if cfg in ('ct2', 'mlx', 'apple-speech'):
         return cfg
 
     # Try to map job.whisper_model back to a tier — it may be either a
@@ -718,6 +726,9 @@ def run_transcription(
                 os.environ.pop("HF_HUB_OFFLINE", None)
                 os.environ.pop("TRANSFORMERS_OFFLINE", None)
                 log_fn("Using MLX (Metal GPU) whisper backend.", 'info')
+            elif backend == 'apple-speech':
+                target = _apple_speech_target
+                log_fn("Using Apple Neural Engine (on-device Speech) backend.", 'info')
             else:
                 target = _whisper_target
 
