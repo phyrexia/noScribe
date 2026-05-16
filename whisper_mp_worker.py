@@ -148,6 +148,7 @@ def whisper_proc_entrypoint(args: dict, q):
             beam_size=args.get("beam_size", 5),
             # temperature=args.get("temperature"),
             word_timestamps=args.get("word_timestamps", False),
+            condition_on_previous_text=False,
             # initial_prompt=prompt,
             hotwords=prompt,
             vad_filter=args.get("vad_filter", True),
