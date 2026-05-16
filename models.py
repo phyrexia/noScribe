@@ -55,6 +55,10 @@ class TranscriptionJob:
         self.timestamps: bool = False
         self.disfluencies: bool = True
         self.pause: int = 0  # index value (0=none, 1=1sec+, etc.)
+        # Skip pyannote diarization, identify the speaker via voice
+        # fingerprint match against speaker_db. Saves ~12s per job when
+        # the user knows there's only one speaker.
+        self.single_speaker_mode: bool = False
 
         # Config-based options
         self.whisper_beam_size: int = 1

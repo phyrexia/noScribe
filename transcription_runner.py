@@ -58,6 +58,77 @@ def _apple_speech_target(args, q):
     apple_speech_proc_entrypoint(args, q)
 
 
+def _voice_embed_target(args, q):
+    """Wrapper that imports the standalone voice-embedding worker."""
+    from voice_embed_worker import voice_embed_proc_entrypoint
+    voice_embed_proc_entrypoint(args, q)
+
+
+def _run_voice_embed(job, app_dir, tmp_audio, log_fn, cancel_check, device_fn):
+    """Extract a single voice embedding from the audio file.
+
+    Returns:
+      (embedding_list, matched_name, similarity) or (None, None, 0.0) on failure.
+    """
+    args = {"audio_path": tmp_audio, "app_dir": app_dir,
+            "window_s": 10.0, "offset_s": 1.0}
+    ctx = mp.get_context("spawn")
+    q = ctx.Queue()
+    p = ctx.Process(target=_voice_embed_target, args=(args, q))
+    p.start()
+
+    embedding = None
+    try:
+        while True:
+            try:
+                msg = q.get(timeout=0.2)
+            except pyqueue.Empty:
+                if cancel_check():
+                    p.terminate()
+                    raise Exception("Canceled by user")
+                if not p.is_alive():
+                    raise Exception(f"Voice-embed worker exited (code {p.exitcode})")
+                continue
+
+            mtype = msg.get("type")
+            if mtype == "log":
+                lvl = msg.get("level", "info")
+                log_fn(f"[voice-embed] {msg.get('msg', '')}",
+                       'error' if lvl == 'error' else 'info')
+            elif mtype == "device":
+                try:
+                    device_fn(msg.get("backend", ""),
+                              msg.get("label", "CPU"),
+                              role=msg.get("role", "voice-embed"))
+                except Exception:
+                    pass
+            elif mtype == "result":
+                if msg.get("ok"):
+                    embedding = msg.get("embedding")
+                else:
+                    err = msg.get("error", "Voice embedding failed")
+                    log_fn(f"[voice-embed] Error: {err}", 'error')
+                break
+    finally:
+        try:
+            p.join(timeout=0.5)
+        except Exception:
+            pass
+        if p.is_alive():
+            p.terminate()
+
+    if not embedding:
+        return None, None, 0.0
+
+    try:
+        import speaker_db
+        name, sim = speaker_db.find_match(embedding)
+        return embedding, name, sim
+    except Exception as e:
+        log_fn(f"Speaker DB match failed: {e}", 'info')
+        return embedding, None, 0.0
+
+
 def _resolve_whisper_backend(job, app_dir: str) -> str:
     """Pick which whisper backend to spawn.
 
@@ -560,7 +631,34 @@ def run_transcription(
         # sequential (CT2) and parallel (MLX on Apple Silicon) orchestrations.
         backend = _resolve_whisper_backend(job, app_dir)
 
-        need_pyannote = job.speaker_detection not in ('none', 'off')
+        # Single-speaker fast path: skip pyannote diarization, run a standalone
+        # voice-embedding extraction (~1-2s), then label every transcript
+        # segment with the matched name from speaker_db (or a default if
+        # there's no match).
+        single_speaker = bool(getattr(job, "single_speaker_mode", False))
+        if single_speaker and job.speaker_detection in ('none', 'off'):
+            # User explicitly turned diarization off — nothing to identify.
+            single_speaker = False
+
+        if single_speaker:
+            log_fn("Single-speaker fast path: extracting voice fingerprint...", 'highlight')
+            embedding, matched_name, sim = _run_voice_embed(
+                job, app_dir, tmp_audio, log_fn, cancel_check, device_fn,
+            )
+            single_speaker_name = ""
+            if matched_name:
+                single_speaker_name = matched_name
+                log_fn(
+                    f"Speaker identified: {matched_name} (similarity {sim:.2f})",
+                    'highlight',
+                )
+            else:
+                single_speaker_name = "Speaker"
+                log_fn("No match in voice DB — labeling as 'Speaker'.", 'info')
+            need_pyannote = False  # bypass diarization entirely
+        else:
+            single_speaker_name = ""
+            need_pyannote = job.speaker_detection not in ('none', 'off')
 
         # Check for cached diarization first (works for both paths).
         cached_diarization = []
@@ -826,9 +924,11 @@ def run_transcription(
                         start_ms = round(seg.get("start", 0) * 1000)
                         end_ms = round(seg.get("end", 0) * 1000)
 
-                        # Find speaker if diarization available
-                        speaker = ""
-                        if diarization:
+                        # Find speaker if diarization available, or use the
+                        # single-speaker label from the voice-fingerprint
+                        # fast path.
+                        speaker = single_speaker_name
+                        if diarization and not speaker:
                             from transcription_service import find_speaker
                             speaker = find_speaker(
                                 diarization, start_ms, end_ms,

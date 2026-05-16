@@ -213,6 +213,12 @@ def build_transcribe_page(page: ft.Page, state: AppState) -> ft.Control:
     overlapping_cb = ft.Checkbox(label="Overlapping speech", value=True)
     timestamps_cb = ft.Checkbox(label="Timestamps", value=False)
     disfluencies_cb = ft.Checkbox(label="Disfluencies", value=True)
+    # Single-speaker fast path: skip pyannote, match voice against speaker DB.
+    single_speaker_cb = ft.Checkbox(
+        label="Single speaker (auto-identify from voice DB)",
+        value=False,
+        tooltip="Skip speaker diarization. Match a 10s voice sample against the saved signatures.",
+    )
 
     def _on_api_key_blur(e):
         """Auto-save API key when field loses focus."""
@@ -298,7 +304,7 @@ def build_transcribe_page(page: ft.Page, state: AppState) -> ft.Control:
         if spk == "off":
             spk = "none"
 
-        return create_transcription_job(
+        job = create_transcription_job(
             audio_file=audio,
             transcript_file=transcript,
             start_time=start_ms,
@@ -313,6 +319,8 @@ def build_transcribe_page(page: ft.Page, state: AppState) -> ft.Control:
             languages=state.languages,
             get_config=get_config,
         )
+        job.single_speaker_mode = bool(single_speaker_cb.value)
+        return job
 
     # ---- Speaker naming bridge (worker↔UI) ----
     from views.dialogs.speaker_naming import SpeakerNamingBridge
@@ -606,6 +614,7 @@ def build_transcribe_page(page: ft.Page, state: AppState) -> ft.Control:
             overlapping_cb,
             disfluencies_cb,
             timestamps_cb,
+            single_speaker_cb,
             ft.Divider(height=8, color=ft.Colors.TRANSPARENT),
             anthropic_key,
             ft.Divider(height=12, color=ft.Colors.TRANSPARENT),
