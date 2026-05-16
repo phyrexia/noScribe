@@ -33,8 +33,11 @@ def generate_meeting_summary(api_key: str, transcript_text: str,
     _DEPRECATED_MODELS = {
         'claude-sonnet-4-20250514': 'claude-sonnet-4-6',
         'claude-opus-4-20250514': 'claude-opus-4-7',
-        'claude-haiku-4-20250414': 'claude-haiku-4-5-20251001',
-        'claude-3-5-sonnet-20241022': 'claude-sonnet-4-5-20250929',
+        'claude-haiku-4-20250414': 'claude-haiku-4-5',
+        'claude-haiku-4-5-20251001': 'claude-haiku-4-5',
+        'claude-sonnet-4-5-20250929': 'claude-sonnet-4-5',
+        'claude-opus-4-1-20250805': 'claude-opus-4-6',
+        'claude-3-5-sonnet-20241022': 'claude-sonnet-4-5',
     }
 
     # Load from config if not provided

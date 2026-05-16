@@ -60,11 +60,11 @@ def build_settings_page(page: ft.Page, state: AppState) -> ft.Control:
         width=400,
         options=[
             ft.dropdown.Option("claude-opus-4-7", "Claude Opus 4.7 (latest, most capable)"),
-            ft.dropdown.Option("claude-opus-4-1-20250805", "Claude Opus 4.1"),
+            ft.dropdown.Option("claude-opus-4-6", "Claude Opus 4.6"),
             ft.dropdown.Option("claude-sonnet-4-6", "Claude Sonnet 4.6 (latest, balanced)"),
-            ft.dropdown.Option("claude-sonnet-4-5-20250929", "Claude Sonnet 4.5"),
-            ft.dropdown.Option("claude-haiku-4-5-20251001", "Claude Haiku 4.5 (latest, fastest)"),
-            ft.dropdown.Option("claude-haiku-3-5-20241022", "Claude Haiku 3.5"),
+            ft.dropdown.Option("claude-sonnet-4-5", "Claude Sonnet 4.5"),
+            ft.dropdown.Option("claude-haiku-4-5", "Claude Haiku 4.5 (latest, fastest)"),
+            ft.dropdown.Option("claude-haiku-4-2", "Claude Haiku 4.2"),
         ],
     )
 
