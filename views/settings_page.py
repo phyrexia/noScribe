@@ -392,7 +392,7 @@ def build_settings_page(page: ft.Page, state: AppState) -> ft.Control:
             ft.dropdown.Option("name", "Name (A→Z)"),
             ft.dropdown.Option("use_count", "Usage count"),
         ],
-        on_change=_on_sort_change,
+        on_select=_on_sort_change,
         width=180,
         dense=True,
     )
