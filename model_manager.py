@@ -59,13 +59,38 @@ MODELS = {
         "size_mb": 3000,
         "label": "MLX Precise (3 GB) – Metal GPU, highest accuracy",
     },
+    # Apple Speech Recognition — uses the system-managed model on the
+    # Neural Engine. Nothing to download or cache from our side; the
+    # worker dispatches via SFSpeechRecognizer (on-device only).
+    "apple-native": {
+        "backend": "apple-speech",
+        "size_mb": 0,
+        "label": "Apple Neural Engine – on-device, multi-language",
+    },
 }
 
 
 def model_backend(quality: str) -> Optional[str]:
-    """Return the backend identifier for a model tier ('ct2' or 'mlx')."""
+    """Return the backend identifier for a model tier ('ct2', 'mlx', 'apple-speech')."""
     entry = MODELS.get(quality)
     return entry.get("backend") if entry else None
+
+
+def _apple_speech_runtime_available() -> bool:
+    """Best-effort check that pyobjc-framework-Speech is importable.
+
+    The actual TCC authorization is requested by the worker on first use;
+    here we only verify the binding is present so the UI gating in
+    `model_is_ready` reflects "no download needed, ready to try".
+    """
+    try:
+        import platform as _plat
+        if _plat.system() != "Darwin":
+            return False
+        import Speech  # noqa: F401
+        return True
+    except Exception:
+        return False
 
 
 def _app_dir() -> Path:
@@ -109,6 +134,11 @@ def model_path(quality: str) -> Optional[Path]:
     entry = MODELS.get(quality)
     if not entry:
         return None
+
+    if entry.get("backend") == "apple-speech":
+        # No filesystem path — the recognizer is a system service. We return
+        # a marker Path so `model_is_ready` can branch on availability.
+        return Path("apple-native") if _apple_speech_runtime_available() else None
 
     if entry.get("backend") == "mlx":
         hf_repo = entry.get("hf_repo")
@@ -154,6 +184,9 @@ def get_model_path_for_app(quality: str) -> Optional[str]:
     if entry.get("backend") == "mlx":
         # mlx-whisper accepts an HF repo id and handles download/cache.
         return entry.get("hf_repo")
+    if entry.get("backend") == "apple-speech":
+        # The backend handles its own model; the tier key is enough.
+        return "apple-native"
     p = model_path(quality)
     return str(p) if p else None
 
@@ -165,6 +198,8 @@ def list_available_models() -> dict:
         p = model_path(q)
         if entry.get("backend") == "mlx":
             location = str(p) if p else (entry.get("hf_repo", "") + " (not downloaded)")
+        elif entry.get("backend") == "apple-speech":
+            location = "system (Apple Speech, on-device)" if p else "Speech framework unavailable"
         else:
             location = str(p) if p else "not downloaded"
         result[q] = {
@@ -215,6 +250,11 @@ def download_model(
     if MODELS[quality].get("backend") == "mlx":
         return
 
+    # Apple Speech recognition uses the system-managed model on the Neural
+    # Engine; there is nothing to download from our side.
+    if MODELS[quality].get("backend") == "apple-speech":
+        return
+
     dest_dir = _USER_MODELS_DIR / quality
     dest_dir.mkdir(parents=True, exist_ok=True)
 
@@ -262,6 +302,10 @@ def delete_model(quality: str) -> None:
                 shutil.rmtree(cache_dir)
         return
 
+    if entry and entry.get("backend") == "apple-speech":
+        # Nothing to delete; the system manages the on-device model.
+        return
+
     user_path = _USER_MODELS_DIR / quality
     if user_path.exists():
         shutil.rmtree(user_path)
@@ -282,6 +326,10 @@ def ensure_model_available(
     if entry and entry.get("backend") == "mlx":
         # Defer download to mlx-whisper at transcribe time.
         return entry.get("hf_repo")
+
+    if entry and entry.get("backend") == "apple-speech":
+        # System backend — no asset to fetch.
+        return "apple-native"
 
     if not model_is_ready(quality):
         download_model(quality, proxy_url=proxy_url, ignore_ssl=ignore_ssl, progress_cb=progress_cb)
