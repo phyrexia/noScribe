@@ -94,6 +94,25 @@ def build_transcribe_page(page: ft.Page, state: AppState) -> ft.Control:
         except ImportError:
             return False
 
+    def _apple_speech_supported() -> bool:
+        # SFSpeechRecognizer requires macOS 13+ for stable on-device
+        # recognition; older releases fall back to server mode (which we
+        # refuse to use).
+        if platform.system() != "Darwin":
+            return False
+        try:
+            v = platform.mac_ver()[0]
+            major = int(v.split(".")[0])
+            if major < 13:
+                return False
+        except Exception:
+            return False
+        try:
+            import Speech  # noqa: F401
+            return True
+        except ImportError:
+            return False
+
     _model_options = [
         ft.dropdown.Option("small", _model_label("small", "Small (246 MB)")),
         ft.dropdown.Option("fast", _model_label("fast", "Fast (785 MB)")),
@@ -104,6 +123,13 @@ def build_transcribe_page(page: ft.Page, state: AppState) -> ft.Control:
             ft.dropdown.Option("mlx-fast", _model_label("mlx-fast", "MLX Fast (1.6 GB) - Metal GPU, turbo")),
             ft.dropdown.Option("mlx-precise", _model_label("mlx-precise", "MLX Precise (3 GB) - Metal GPU, large-v3")),
         ]
+    if _apple_speech_supported():
+        _model_options.append(
+            ft.dropdown.Option(
+                "apple-native",
+                _model_label("apple-native", "Apple Neural Engine (multi-lang, fast)"),
+            )
+        )
 
     model_dropdown = ft.Dropdown(
         label="Model",

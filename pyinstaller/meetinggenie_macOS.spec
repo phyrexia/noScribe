@@ -162,6 +162,7 @@ app = BUNDLE(
         "CFBundleDisplayName": "MeetingGenie",
         "NSMicrophoneUsageDescription": "MeetingGenie needs microphone access for live meeting transcription.",
         "NSAppleEventsUsageDescription": "MeetingGenie uses Apple Events for system integration.",
+        "NSSpeechRecognitionUsageDescription": "MeetingGenie uses Apple's on-device speech recognition to transcribe meetings without sending audio off your Mac.",
         "LSMinimumSystemVersion": "14.0",
     },
 )
