@@ -74,9 +74,9 @@ def whisper_proc_entrypoint(args: dict, q):
         # truthful badge. The CT2 backend is CPU-only on macOS.
         try:
             if device == 'cuda':
-                q.put({"type": "device", "backend": "cuda", "label": "NVIDIA GPU"})
+                q.put({"type": "device", "role": "transcription", "backend": "cuda", "label": "NVIDIA GPU"})
             else:
-                q.put({"type": "device", "backend": "ct2-cpu", "label": "CPU"})
+                q.put({"type": "device", "role": "transcription", "backend": "ct2-cpu", "label": "CPU"})
         except Exception:
             pass
 
