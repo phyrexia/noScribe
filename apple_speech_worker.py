@@ -240,14 +240,22 @@ def apple_speech_proc_entrypoint(args: dict, q):
         # Poll the run-loop equivalent: the Speech framework delivers callbacks
         # on its own dispatch queue, so the worker can simply block on `done`
         # while emitting heartbeat progress.
+        # Apple Speech delivers callbacks via a dispatch queue tied to the
+        # main run loop. Without a running CFRunLoop the result handler never
+        # fires, so we pump the run loop in slices instead of plain sleeping.
+        from Foundation import NSRunLoop, NSDate
+        run_loop = NSRunLoop.currentRunLoop()
+
         last_progress = -1
-        # Block in 0.5s slices; abort with a clear error if no result has
-        # arrived after 10 minutes — Apple Speech has a ~1h hard limit but
-        # most meeting clips should complete much faster.
         max_wait_s = 60 * 60
         elapsed = 0.0
-        while not done.wait(timeout=0.5):
+        while not done.is_set():
+            # Pump the run loop for 0.5s so the Speech framework can deliver
+            # partial and final result callbacks on this thread.
+            run_loop.runUntilDate_(NSDate.dateWithTimeIntervalSinceNow_(0.5))
             elapsed += 0.5
+            if done.is_set():
+                break
             if elapsed >= max_wait_s:
                 try:
                     task.cancel()
