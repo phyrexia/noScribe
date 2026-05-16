@@ -13,3 +13,5 @@ pyobjc
 python-i18n
 PyYAML
 soundfile
+# macOS-only: Metal-accelerated Whisper via Apple MLX
+mlx-whisper
