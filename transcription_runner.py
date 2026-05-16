@@ -485,6 +485,7 @@ def run_transcription(
     cancel_check=None,
     speaker_naming_fn=None,
     device_fn=None,
+    whisper_pool=None,
 ):
     """Run a full transcription pipeline for one job.
 
@@ -720,21 +721,50 @@ def run_transcription(
             else:
                 target = _whisper_target
 
-            ctx = mp.get_context("spawn")
-            q = ctx.Queue()
-            p = ctx.Process(target=target, args=(w_args, q))
-            p.start()
+            # Persistent worker pool path (CT2 only). MLX uses spawn-per-job.
+            use_pool = (
+                whisper_pool is not None
+                and backend == 'ct2'
+                and getattr(whisper_pool, 'is_alive', lambda: False)()
+            )
 
-            # Each segment: {"text": str, "start_ms": int, "end_ms": int, "speaker": str}
+            p = None
+            if use_pool:
+                try:
+                    q = whisper_pool.run_job(w_args)
+                    log_fn("Using persistent whisper worker pool.", 'info')
+                except Exception as e:
+                    log_fn(f"Whisper pool unavailable ({e}); falling back to spawn.", 'info')
+                    use_pool = False
+
+            if not use_pool:
+                ctx = mp.get_context("spawn")
+                q = ctx.Queue()
+                p = ctx.Process(target=target, args=(w_args, q))
+                p.start()
+
             try:
                 while True:
                     try:
                         msg = q.get(timeout=0.2)
                     except pyqueue.Empty:
                         if cancel_check():
-                            p.terminate()
+                            if use_pool:
+                                try:
+                                    whisper_pool.cancel_current()
+                                except Exception:
+                                    pass
+                                try:
+                                    whisper_pool.shutdown(timeout=0.5)
+                                except Exception:
+                                    pass
+                            elif p is not None:
+                                p.terminate()
                             raise Exception("Canceled by user")
-                        if not p.is_alive():
+                        if use_pool:
+                            if not whisper_pool.is_alive():
+                                raise Exception("Whisper pool worker died unexpectedly")
+                        elif p is not None and not p.is_alive():
                             raise Exception(f"Whisper worker exited (code {p.exitcode})")
                         continue
 
@@ -790,12 +820,14 @@ def run_transcription(
                             raise Exception(f"[WHISPER] {err}")
                         break
             finally:
-                try:
-                    p.join(timeout=0.5)
-                except Exception:
-                    pass
-                if p.is_alive():
-                    p.terminate()
+                if p is not None:
+                    try:
+                        p.join(timeout=0.5)
+                    except Exception:
+                        pass
+                    if p.is_alive():
+                        p.terminate()
+                # Pool worker stays alive across jobs — no cleanup here.
 
             timings['transcription'] = time.time() - t_step
             log_fn(f"Transcription complete. ({timings['transcription']:.0f}s)", 'info')
