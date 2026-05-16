@@ -383,20 +383,7 @@ except Exception as locale_error:
         raise SystemExit(1) from locale_error
 
 # determine optimal number of threads for faster-whisper (depending on cpu cores)
-if platform.system() == 'Windows':
-    number_threads = get_config('threads', cpufeature.CPUFeature["num_physical_cores"])
-elif platform.system() == "Linux":
-    number_threads = get_config('threads', os.cpu_count() if os.cpu_count() is not None else 4)
-elif platform.system() == "Darwin": # = MAC
-    if platform.machine() == "arm64":
-        cpu_count = int(check_output(["sysctl", "-n", "hw.perflevel0.logicalcpu_max"]))
-    elif platform.machine() == "x86_64":
-        cpu_count = int(check_output(["sysctl", "-n", "hw.logicalcpu_max"]))
-    else:
-        raise Exception("Unsupported mac")
-    number_threads = get_config('threads', int(cpu_count * 0.75))
-else:
-    raise Exception('Platform not supported yet.')
+number_threads = int(get_config('threads', utils.detect_thread_count()))
 
 # timestamp regex
 timestamp_re = re.compile(r'\[\d\d:\d\d:\d\d.\d\d\d --> \d\d:\d\d:\d\d.\d\d\d\]')
@@ -2450,9 +2437,9 @@ class App(ctk.CTk):
                 pass
 
         try:
-            cpu_threads = int(config.get("cpu_threads", os.cpu_count() or 4))
+            cpu_threads = int(config.get("cpu_threads", utils.detect_thread_count()))
         except (ValueError, TypeError):
-            cpu_threads = 4
+            cpu_threads = utils.detect_thread_count()
 
         args = {
             "locale": getattr(self, "current_locale", "en"),

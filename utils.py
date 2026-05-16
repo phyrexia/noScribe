@@ -2,9 +2,40 @@
 Different small and distinct helper functions
 """
 
+import os
+import platform
 from pathlib import Path
+from subprocess import check_output
 
 import i18n
+
+
+def detect_thread_count() -> int:
+    """Return a sensible default for CT2 cpu_threads.
+
+    On Apple Silicon (Darwin/arm64) returns the count of performance cores
+    (typically 6-12) — E-cores are skipped because mixing them with P-cores
+    in a single thread pool hurts CT2 throughput. On Intel macOS uses
+    logicalcpu_max. On Windows uses physical cores via cpufeature when
+    available. Falls back to os.cpu_count() elsewhere.
+    """
+    system = platform.system()
+    try:
+        if system == "Darwin":
+            if platform.machine() == "arm64":
+                return int(check_output(["sysctl", "-n", "hw.perflevel0.logicalcpu_max"]))
+            return int(check_output(["sysctl", "-n", "hw.logicalcpu_max"]))
+        if system == "Windows":
+            try:
+                import cpufeature  # type: ignore
+                return int(cpufeature.CPUFeature["num_physical_cores"])
+            except Exception:
+                pass
+        if system == "Linux":
+            return os.cpu_count() or 4
+    except Exception:
+        pass
+    return os.cpu_count() or 4
 
 
 def str_to_ms(time_str: str) -> int:
