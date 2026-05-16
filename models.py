@@ -317,15 +317,12 @@ def create_transcription_job(
     job.whisper_temperature = get_config('whisper_temperature', 0.0)
     job.whisper_compute_type = get_config('whisper_compute_type', 'default')
 
-    # Optimize compute type for macOS (Apple Silicon)
+    # Apple Silicon: CT2 int8 is 2-4x faster than fp32 on CPU with negligible
+    # WER hit. compute_type selects runtime arithmetic, model weights are
+    # already FP16/INT8 in the CT2 conversion.
     if platform.system() == "Darwin":
-        model_str = str(job.whisper_model).lower()
-        if 'int8' in model_str:
-            if job.whisper_compute_type in ['default', 'float16']:
-                job.whisper_compute_type = 'int8'
-        else:
-            if job.whisper_compute_type in ['default', 'float16']:
-                job.whisper_compute_type = 'float32'
+        if job.whisper_compute_type in ['default', 'float16', 'float32']:
+            job.whisper_compute_type = 'int8'
 
     job.timestamp_interval = get_config('timestamp_interval', 60_000)
     job.timestamp_color = get_config('timestamp_color', '#78909C')
