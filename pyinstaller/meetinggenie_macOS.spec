@@ -137,7 +137,7 @@ mg_exe = EXE(
     target_arch='arm64',
     codesign_identity=None,
     entitlements_file=None,
-    icon=['../noScribeLogo.ico'],
+    icon=['../MeetingGenieLogo.ico'],
 )
 
 coll = COLLECT(
@@ -154,7 +154,7 @@ coll = COLLECT(
 app = BUNDLE(
     coll,
     name='MeetingGenie.app',
-    icon='../noScribeLogo.ico',
+    icon='../MeetingGenieLogo.ico',
     bundle_identifier='com.meetinggenie.app',
     info_plist={
         "CFBundleShortVersionString": "1.0",
