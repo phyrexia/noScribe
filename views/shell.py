@@ -4,6 +4,7 @@
 import flet as ft
 from app_state import AppState
 from event_bus import EventType
+from config import APP_VERSION
 
 
 # Brand colours
@@ -129,6 +130,17 @@ def build_shell(page: ft.Page, state: AppState, pages: dict[str, ft.Control]):
                             size=24,
                             weight=ft.FontWeight.BOLD,
                             color=BRAND_BLUE,
+                        ),
+                        ft.Container(
+                            content=ft.Text(
+                                f"v{APP_VERSION}",
+                                size=11,
+                                color=ft.Colors.ON_SURFACE_VARIANT,
+                                weight=ft.FontWeight.W_500,
+                            ),
+                            padding=ft.padding.symmetric(horizontal=8, vertical=2),
+                            bgcolor=ft.Colors.SURFACE_VARIANT,
+                            border_radius=10,
                         ),
                         device_badge,
                         role_chips_container,

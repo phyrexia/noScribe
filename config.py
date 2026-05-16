@@ -8,8 +8,8 @@ import yaml
 import appdirs
 
 APP_NAME = 'MeetingGenie'
-APP_VERSION = '1.0'
-APP_YEAR = '2025'
+APP_VERSION = '1.1.0'
+APP_YEAR = '2026'
 
 # --- Paths -----------------------------------------------------------
 
