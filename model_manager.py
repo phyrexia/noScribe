@@ -27,21 +27,45 @@ GH_RELEASE_URL = "https://github.com/phyrexia/noScribe/releases/download/models-
 
 MODELS = {
     "small": {
+        "backend": "ct2",
         "files": ["config.json", "model.bin", "tokenizer.json", "vocabulary.json"],
         "size_mb": 246,
         "label": "Small (246 MB) – fastest, for live mode",
     },
     "fast": {
+        "backend": "ct2",
         "files": ["config.json", "model.bin", "tokenizer.json", "vocabulary.json", "preprocessor_config.json"],
         "size_mb": 785,
         "label": "Fast (785 MB) – good for most meetings",
     },
     "precise": {
+        "backend": "ct2",
         "files": ["config.json", "model.bin", "tokenizer.json", "vocabulary.json", "preprocessor_config.json"],
         "size_mb": 1500,
         "label": "Precise (1.5 GB) – highest accuracy",
     },
+    # MLX tiers — Metal-accelerated. Downloaded by mlx-whisper from HuggingFace
+    # on first use to ~/.cache/huggingface/hub/. Path resolution returns the
+    # HF repo id, not a local filesystem path.
+    "mlx-fast": {
+        "backend": "mlx",
+        "hf_repo": "mlx-community/whisper-large-v3-turbo",
+        "size_mb": 1600,
+        "label": "MLX Fast (1.6 GB) – Metal GPU, turbo",
+    },
+    "mlx-precise": {
+        "backend": "mlx",
+        "hf_repo": "mlx-community/whisper-large-v3-mlx",
+        "size_mb": 3000,
+        "label": "MLX Precise (3 GB) – Metal GPU, highest accuracy",
+    },
 }
+
+
+def model_backend(quality: str) -> Optional[str]:
+    """Return the backend identifier for a model tier ('ct2' or 'mlx')."""
+    entry = MODELS.get(quality)
+    return entry.get("backend") if entry else None
 
 
 def _app_dir() -> Path:
@@ -57,16 +81,45 @@ def models_dir() -> Path:
     return _USER_MODELS_DIR
 
 
+def _mlx_hf_cache_dir(hf_repo: str) -> Path:
+    """Return the HuggingFace hub cache directory path for an MLX repo.
+
+    HF cache layout: ~/.cache/huggingface/hub/models--{org}--{name}/snapshots/...
+    """
+    org, name = hf_repo.split('/', 1) if '/' in hf_repo else ('', hf_repo)
+    cache_root = Path(os.environ.get('HF_HOME', Path.home() / '.cache' / 'huggingface')) / 'hub'
+    return cache_root / f"models--{org}--{name}"
+
+
 def model_path(quality: str) -> Optional[Path]:
     """Return the path where the model is found, checking bundled first.
 
-    Search order:
+    For CT2 models, returns a local directory path. For MLX models, returns
+    the HF cache directory if a snapshot exists locally (None otherwise).
+
+    Note: callers that pass the model identifier to mlx-whisper should use
+    `get_model_path_for_app()` which returns the HF repo id string for MLX
+    tiers (mlx-whisper resolves the cache itself).
+
+    Search order (CT2):
       1. Bundled: {app_dir}/models/{quality}/
       2. User:    ~/.meetinggenie/models/{quality}/
     Returns None if not found anywhere.
     """
     entry = MODELS.get(quality)
     if not entry:
+        return None
+
+    if entry.get("backend") == "mlx":
+        hf_repo = entry.get("hf_repo")
+        if not hf_repo:
+            return None
+        cache_dir = _mlx_hf_cache_dir(hf_repo)
+        snapshots = cache_dir / 'snapshots'
+        if snapshots.is_dir():
+            for snap in snapshots.iterdir():
+                if snap.is_dir() and any(snap.iterdir()):
+                    return snap
         return None
 
     # 1. Bundled with app
@@ -88,7 +141,19 @@ def model_is_ready(quality: str) -> bool:
 
 
 def get_model_path_for_app(quality: str) -> Optional[str]:
-    """Return absolute path for faster-whisper, or None if not available."""
+    """Return the identifier to pass to the whisper backend.
+
+    - CT2 tiers: absolute filesystem path (faster-whisper).
+    - MLX tiers: HuggingFace repo id (mlx-whisper resolves/downloads itself).
+
+    Returns None only if the tier is unknown.
+    """
+    entry = MODELS.get(quality)
+    if not entry:
+        return None
+    if entry.get("backend") == "mlx":
+        # mlx-whisper accepts an HF repo id and handles download/cache.
+        return entry.get("hf_repo")
     p = model_path(quality)
     return str(p) if p else None
 
@@ -98,9 +163,14 @@ def list_available_models() -> dict:
     result = {}
     for q, entry in MODELS.items():
         p = model_path(q)
+        if entry.get("backend") == "mlx":
+            location = str(p) if p else (entry.get("hf_repo", "") + " (not downloaded)")
+        else:
+            location = str(p) if p else "not downloaded"
         result[q] = {
             "ready": p is not None,
-            "location": str(p) if p else "not downloaded",
+            "backend": entry.get("backend", "ct2"),
+            "location": location,
             "size_mb": entry["size_mb"],
             "label": entry["label"],
         }
@@ -140,6 +210,11 @@ def download_model(
     if quality not in MODELS:
         raise ValueError(f"Unknown model: {quality}. Available: {list(MODELS.keys())}")
 
+    # MLX models are fetched lazily by mlx-whisper from HuggingFace on first use.
+    # We do not pre-download them here — that is delegated to the worker.
+    if MODELS[quality].get("backend") == "mlx":
+        return
+
     dest_dir = _USER_MODELS_DIR / quality
     dest_dir.mkdir(parents=True, exist_ok=True)
 
@@ -178,6 +253,15 @@ def download_model(
 
 def delete_model(quality: str) -> None:
     """Remove a downloaded model to free disk space. Won't delete bundled models."""
+    entry = MODELS.get(quality)
+    if entry and entry.get("backend") == "mlx":
+        hf_repo = entry.get("hf_repo")
+        if hf_repo:
+            cache_dir = _mlx_hf_cache_dir(hf_repo)
+            if cache_dir.exists():
+                shutil.rmtree(cache_dir)
+        return
+
     user_path = _USER_MODELS_DIR / quality
     if user_path.exists():
         shutil.rmtree(user_path)
@@ -189,7 +273,16 @@ def ensure_model_available(
     ignore_ssl: bool = False,
     progress_cb: Optional[Callable[[int, int], None]] = None,
 ) -> str:
-    """Download the model if needed, then return its path."""
+    """Download the model if needed, then return its identifier.
+
+    For CT2 tiers this returns a filesystem path. For MLX tiers it returns
+    the HuggingFace repo id (mlx-whisper handles the download lazily).
+    """
+    entry = MODELS.get(quality)
+    if entry and entry.get("backend") == "mlx":
+        # Defer download to mlx-whisper at transcribe time.
+        return entry.get("hf_repo")
+
     if not model_is_ready(quality):
         download_model(quality, proxy_url=proxy_url, ignore_ssl=ignore_ssl, progress_cb=progress_cb)
     path = get_model_path_for_app(quality)
