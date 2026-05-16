@@ -344,7 +344,7 @@ def run_transcription(
             "language_code": language_code,
             "disfluencies": job.disfluencies,
             "beam_size": job.whisper_beam_size,
-            "word_timestamps": True,
+            "word_timestamps": False,
             "vad_filter": True,
             "vad_threshold": job.vad_threshold,
             "locale": get_config('locale', 'en'),
