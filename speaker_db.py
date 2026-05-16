@@ -197,13 +197,21 @@ def find_match(embedding, threshold: float = SIMILARITY_THRESHOLD):
 # ─────────────────────────────────────────────────────────────────────────────
 
 
-def add_speaker(name: str, embedding, samples=None, source_file: str = '') -> str:
+def add_speaker(
+    name: str,
+    embedding,
+    samples=None,
+    source_file: str = '',
+    desired_uuid: str = '',
+) -> str:
     """Add a brand-new speaker entry and return its UUID.
 
     If a speaker with the same name already exists, the embedding is blended
     into the existing entry (use_count incremented) and the existing UUID is
     returned. Provide *samples* as a list of paths (relative to the config
-    dir, or absolute — stored as relative when inside it).
+    dir, or absolute — stored as relative when inside it). When *desired_uuid*
+    is provided and unused, the new entry is created with that UUID — handy
+    for keeping pre-generated sample filenames in sync with the DB.
     """
     import numpy as np
 
@@ -266,8 +274,12 @@ def add_speaker(name: str, embedding, samples=None, source_file: str = '') -> st
             save_db(db)
             return s['id']
 
-    # Otherwise create a new entry.
-    new_id = str(_uuid.uuid4())
+    # Otherwise create a new entry. Honour desired_uuid when collision-free.
+    used = {s.get('id') for s in db.get('speakers', [])}
+    if desired_uuid and desired_uuid not in used:
+        new_id = desired_uuid
+    else:
+        new_id = str(_uuid.uuid4())
     db.setdefault('speakers', []).append({
         'id': new_id,
         'name': name,
@@ -284,12 +296,24 @@ def add_speaker(name: str, embedding, samples=None, source_file: str = '') -> st
     return new_id
 
 
-def save_speaker(name: str, embedding, samples=None, source_file: str = '') -> str:
+def save_speaker(
+    name: str,
+    embedding,
+    samples=None,
+    source_file: str = '',
+    desired_uuid: str = '',
+) -> str:
     """Backward-compatible wrapper used by the speaker-naming dialog.
 
     Returns the speaker UUID (new or existing).
     """
-    return add_speaker(name, embedding, samples=samples, source_file=source_file)
+    return add_speaker(
+        name,
+        embedding,
+        samples=samples,
+        source_file=source_file,
+        desired_uuid=desired_uuid,
+    )
 
 
 def update_speaker_last_used(uuid: str) -> None:

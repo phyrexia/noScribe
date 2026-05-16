@@ -171,16 +171,47 @@ class SpeakerNamingBridge:
                         if spk_data and spk_data.get('embedding'):
                             try:
                                 import speaker_db
-                                speaker_db.save_speaker(name, spk_data['embedding'])
+                                # Determine if this is a NEW signature or a
+                                # confirmed match against an existing one.
+                                matched_uuid = spk_data.get('matched_uuid')
+                                sim = spk_data.get('similarity', 0.0) or 0.0
+                                is_new = not (matched_uuid and sim > 0.7)
+                                sample_paths = []
+                                if is_new:
+                                    cap = spk_data.get('sample_capture') or {}
+                                    done = cap.get('done_event')
+                                    if done is not None:
+                                        # Brief wait so the slicer finishes
+                                        # before we persist the entry.
+                                        done.wait(timeout=20)
+                                    sample_paths = list(cap.get('paths') or [])
+                                speaker_db.save_speaker(
+                                    name,
+                                    spk_data['embedding'],
+                                    samples=sample_paths,
+                                    source_file=spk_data.get('source_file', ''),
+                                    desired_uuid=spk_data.get('pending_uuid', '') if is_new else '',
+                                )
+                                if matched_uuid and not is_new:
+                                    # Bump usage stats for the matched entry.
+                                    try:
+                                        speaker_db.update_speaker_last_used(matched_uuid)
+                                    except Exception:
+                                        pass
                                 saved.append(name)
                             except Exception:
                                 pass
+            # Clean up pre-sliced sample WAVs that ended up unused (either
+            # because the user picked an existing match, didn't tick "save",
+            # or left the name blank).
+            self._cleanup_unused_samples(unique_speakers, name_fields, save_checkboxes)
             self._saved_names = saved
             self._result = result
             self._page.pop_dialog()
             self._done_event.set()
 
         def _on_skip(e):
+            self._cleanup_unused_samples(unique_speakers, name_fields, save_checkboxes)
             self._result = {}
             self._saved_names = []
             self._page.pop_dialog()
@@ -221,6 +252,34 @@ class SpeakerNamingBridge:
             print(f"[speakers] Saved voice signatures: {', '.join(self._saved_names)}")
 
         return self._result
+
+    def _cleanup_unused_samples(self, unique_speakers, name_fields, save_checkboxes):
+        """Remove pre-sliced WAV samples that weren't attached to a new entry."""
+        import speaker_db
+        for spk in unique_speakers:
+            lbl = spk['label']
+            cap = spk.get('sample_capture') or {}
+            done = cap.get('done_event')
+            if done is None:
+                continue
+            name = (name_fields.get(lbl).value or '').strip() if name_fields.get(lbl) else ''
+            save_on = bool(save_checkboxes.get(lbl) and save_checkboxes[lbl].value)
+            matched_uuid = spk.get('matched_uuid')
+            sim = spk.get('similarity', 0.0) or 0.0
+            is_new = not (matched_uuid and sim > 0.7)
+            consumed = save_on and bool(name) and is_new
+            if consumed:
+                # The save path will use these — leave them alone.
+                continue
+            # Otherwise wait briefly for the slicer (so we don't race) then drop.
+            done.wait(timeout=5)
+            for rel in cap.get('paths') or []:
+                try:
+                    import os as _os
+                    _os.remove(speaker_db.sample_abs_path(rel))
+                except OSError:
+                    pass
+            cap['paths'] = []
 
     def on_pubsub_message(self, message):
         if message == "__show_speaker_dialog__" and self._dlg:
