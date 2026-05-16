@@ -73,7 +73,7 @@ else
   if command -v create-dmg >/dev/null 2>&1; then
     create-dmg \
       --volname "MeetingGenie" \
-      --volicon "$ROOT_DIR/noScribeLogo.ico" \
+      --volicon "$ROOT_DIR/MeetingGenieLogo.ico" \
       --window-pos 200 120 \
       --window-size 660 400 \
       --icon-size 120 \
