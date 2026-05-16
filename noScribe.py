@@ -826,16 +826,12 @@ def create_transcription_job(audio_file=None, transcript_file=None, start_time=N
     
     # Optimize compute type for macOS (Apple Silicon)
     if platform.system() == "Darwin":
-        model_str = str(job.whisper_model).lower()
-        if 'int8' in model_str:
-            # For int8 models, use int8 if not overridden
-            if job.whisper_compute_type in ['default', 'float16']:
-                job.whisper_compute_type = 'int8'
-        else:
-            # For non-int8 models (like precise/large), float16 is inaccurate/slow on CPU
-            # Force float32 to avoid conversion warning and overhead
-            if job.whisper_compute_type in ['default', 'float16']:
-                job.whisper_compute_type = 'float32'
+        # CTranslate2 int8 is 2-4x faster than fp32 on CPU and the model.bin
+        # holds the same weights regardless of compute_type (it's the runtime
+        # arithmetic). Force int8 unless the user explicitly picked a
+        # non-default compute type.
+        if job.whisper_compute_type in ['default', 'float16']:
+            job.whisper_compute_type = 'int8'
     job.timestamp_interval = get_config('timestamp_interval', 60_000)
     job.timestamp_color = get_config('timestamp_color', '#78909C')
     job.pause_marker = get_config('pause_seconds_marker', '.')
