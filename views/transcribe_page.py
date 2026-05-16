@@ -85,15 +85,31 @@ def build_transcribe_page(page: ft.Page, state: AppState) -> ft.Control:
         check = "\u2713" if model_manager.model_is_ready(key) else "\u2193"  # ✓ or ↓
         return f"{check} {label}"
 
+    def _mlx_supported() -> bool:
+        if not (platform.system() == "Darwin" and platform.machine() == "arm64"):
+            return False
+        try:
+            import mlx_whisper  # noqa: F401
+            return True
+        except ImportError:
+            return False
+
+    _model_options = [
+        ft.dropdown.Option("small", _model_label("small", "Small (246 MB)")),
+        ft.dropdown.Option("fast", _model_label("fast", "Fast (785 MB)")),
+        ft.dropdown.Option("precise", _model_label("precise", "Precise (1.5 GB)")),
+    ]
+    if _mlx_supported():
+        _model_options += [
+            ft.dropdown.Option("mlx-fast", _model_label("mlx-fast", "MLX Fast (1.6 GB) - Metal GPU, turbo")),
+            ft.dropdown.Option("mlx-precise", _model_label("mlx-precise", "MLX Precise (3 GB) - Metal GPU, large-v3")),
+        ]
+
     model_dropdown = ft.Dropdown(
         label="Model",
         value="fast",
-        options=[
-            ft.dropdown.Option("small", _model_label("small", "Small (246 MB)")),
-            ft.dropdown.Option("fast", _model_label("fast", "Fast (785 MB)")),
-            ft.dropdown.Option("precise", _model_label("precise", "Precise (1.5 GB)")),
-        ],
-        width=220,
+        options=_model_options,
+        width=260,
         dense=True,
     )
 
