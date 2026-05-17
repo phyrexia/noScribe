@@ -139,7 +139,7 @@ def build_shell(page: ft.Page, state: AppState, pages: dict[str, ft.Control]):
                                 weight=ft.FontWeight.W_500,
                             ),
                             padding=ft.padding.symmetric(horizontal=8, vertical=2),
-                            bgcolor=ft.Colors.SURFACE_VARIANT,
+                            bgcolor=ft.Colors.SURFACE_CONTAINER_HIGHEST,
                             border_radius=10,
                         ),
                         device_badge,
