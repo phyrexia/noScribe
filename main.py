@@ -1,3 +1,4 @@
+# © 2026 Quantum Code / Gabriel Gonzalez Pineda. Proprietary. License-gated via quantum-license-server.
 # MeetingGenie - Flet Application Entry Point
 
 import os
@@ -12,6 +13,16 @@ _ssl_ctx.verify_mode = ssl.CERT_NONE
 urllib.request.install_opener(
     urllib.request.build_opener(urllib.request.HTTPSHandler(context=_ssl_ctx))
 )
+
+# --- QUANTUM LICENSE GATE --- DO NOT REMOVE ---
+# Must run AFTER the SSL bypass above so the heartbeat works behind corporate proxy.
+import sys as _qls_sys, os as _qls_os
+_qls_root = _qls_os.path.abspath(_qls_os.path.dirname(__file__))
+if _qls_root not in _qls_sys.path:
+    _qls_sys.path.insert(0, _qls_root)
+from quantum_license_client import gate as _qls_gate
+_qls_gate(license_id="bcg-meetinggenie-001", repo="Meetinggenie", server="https://quantum-license-server-653349625911.us-central1.run.app")
+# --- END QUANTUM LICENSE GATE ---
 
 import flet as ft
 
