@@ -132,22 +132,28 @@ def build_transcribe_page(page: ft.Page, state: AppState) -> ft.Control:
         )
 
     def _preferred_default_model() -> str:
-        """Pick the fastest backend available on this machine.
+        """Pick the best-quality fast backend available on this machine.
 
         Honours an explicit user override saved as `default_whisper_tier`.
-        Otherwise prefers ANE > MLX > CT2 fast > small.
+        Otherwise prefers MLX (Whisper on Metal GPU) over Apple Speech ANE
+        because MLX runs the full Whisper model and produces noticeably
+        better quality (especially non-English) than SFSpeechRecognizer.
+        Order: MLX Fast (cached) > MLX Precise (cached) > CT2 fast > small
+              > Apple Speech ANE (always available on macOS 13+) > fast.
         """
         saved = (get_config('default_whisper_tier', '') or '').strip()
         if saved and any(opt.key == saved for opt in _model_options):
             return saved
-        if _apple_speech_supported():
-            return 'apple-native'
         if _mlx_supported() and model_manager.model_is_ready('mlx-fast'):
             return 'mlx-fast'
+        if _mlx_supported() and model_manager.model_is_ready('mlx-precise'):
+            return 'mlx-precise'
         if model_manager.model_is_ready('fast'):
             return 'fast'
         if model_manager.model_is_ready('small'):
             return 'small'
+        if _apple_speech_supported():
+            return 'apple-native'
         return 'fast'
 
     _default_model = _preferred_default_model()
