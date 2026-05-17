@@ -131,13 +131,55 @@ def build_transcribe_page(page: ft.Page, state: AppState) -> ft.Control:
             )
         )
 
+    def _preferred_default_model() -> str:
+        """Pick the fastest backend available on this machine.
+
+        Honours an explicit user override saved as `default_whisper_tier`.
+        Otherwise prefers ANE > MLX > CT2 fast > small.
+        """
+        saved = (get_config('default_whisper_tier', '') or '').strip()
+        if saved and any(opt.key == saved for opt in _model_options):
+            return saved
+        if _apple_speech_supported():
+            return 'apple-native'
+        if _mlx_supported() and model_manager.model_is_ready('mlx-fast'):
+            return 'mlx-fast'
+        if model_manager.model_is_ready('fast'):
+            return 'fast'
+        if model_manager.model_is_ready('small'):
+            return 'small'
+        return 'fast'
+
+    _default_model = _preferred_default_model()
+
+    def _on_model_change(e):
+        try:
+            state.set_config('default_whisper_tier', model_dropdown.value or _default_model)
+            state.save_config()
+        except Exception:
+            pass
+
     model_dropdown = ft.Dropdown(
         label="Model",
-        value="fast",
+        value=_default_model,
         options=_model_options,
         width=260,
         dense=True,
+        on_select=_on_model_change,
     )
+
+    # Seed the header device badge from the preferred backend so the UI
+    # shows the real compute target before any job has run. Workers will
+    # overwrite this with the live device label once they start.
+    try:
+        if _default_model == 'apple-native':
+            state.update_compute_device('apple-ane', 'Apple Neural Engine', role='transcription')
+        elif _default_model.startswith('mlx-'):
+            state.update_compute_device('mlx-metal', 'Metal GPU (MLX)', role='transcription')
+        else:
+            state.update_compute_device('ct2-cpu', 'CPU', role='transcription')
+    except Exception:
+        pass
 
     speaker_dropdown = ft.Dropdown(
         label="Speaker detection",
