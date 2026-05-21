@@ -2679,8 +2679,25 @@ class App(ctk.CTk):
                     if ext == 'txt':
                         with open(file, 'r', encoding='utf-8') as f:
                             text_to_summarize = f.read()
+                    elif ext in ('html', 'htm'):
+                        with open(file, 'r', encoding='utf-8') as f:
+                            raw_html = f.read()
+                        try:
+                            from AdvancedHTMLParser import AdvancedHTMLParser
+                            parser = AdvancedHTMLParser()
+                            parser.parseStr(raw_html)
+                            body = parser.getElementsByTagName('body')
+                            if body:
+                                text_to_summarize = body[0].textContent
+                            else:
+                                text_to_summarize = parser.getHTML()
+                        except Exception:
+                            # Fallback: strip tags with a regex
+                            import re
+                            text_to_summarize = re.sub(r'<[^>]+>', ' ', raw_html)
+                            text_to_summarize = re.sub(r'\s+', ' ', text_to_summarize).strip()
                     else:
-                        tk.messagebox.showerror(title='MeetingGenie', message='Por favor escoge un resultado .txt para resumir (no html/srt).')
+                        tk.messagebox.showerror(title='MeetingGenie', message='Por favor escoge un resultado .txt o .html para resumir (no srt/vtt).')
                         return
             
             if len(text_to_summarize) < 10:
