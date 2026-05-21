@@ -1996,17 +1996,23 @@ class App(ctk.CTk):
                     else:
                         self.whisper_model_paths[entry] = entry_path
 
-        # On-demand models (downloaded by model_manager into user data dir)
+        # Bundled models in app_dir/models (where install.sh and the
+        # PyInstaller bundle populate). Registered first so they win over
+        # ~/.noscribe/ duplicates and so collect_models doesn't trip the
+        # "double name" warning for built-in qualities.
+        bundled_models = os.path.join(app_dir, 'models')
+        if os.path.isdir(bundled_models):
+            collect_models(bundled_models)
+
+        # On-demand models (~/.noscribe/models/ — downloaded by model_manager).
+        # Skip qualities already covered by bundled to avoid the warning.
         for quality in ('small', 'fast', 'precise'):
+            if quality in self.whisper_model_paths:
+                continue
             if model_manager.model_is_ready(quality):
                 path = model_manager.get_model_path_for_app(quality)
                 if path:
                     self.whisper_model_paths[quality] = path
-
-        # Bundled models in app_dir/models (backwards compat, usually empty now)
-        bundled_models = os.path.join(app_dir, 'models')
-        if os.path.isdir(bundled_models):
-            collect_models(bundled_models)
 
         # User-defined custom models
         collect_models(self.user_models_dir)
