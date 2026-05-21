@@ -28,10 +28,9 @@ def generate_meeting_summary(api_key: str, transcript_text: str) -> str:
         
         client = Anthropic(api_key=api_key)
         
-        # We use Claude 3.5 Sonnet for fast, cheap, and excellent reasoning
         response = client.messages.create(
-            model="claude-3-5-sonnet-20241022",
-            max_tokens=1500,
+            model="claude-sonnet-4-5",
+            max_tokens=4096,
             temperature=0.3,
             system=system_prompt,
             messages=[
