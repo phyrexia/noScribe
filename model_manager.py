@@ -66,25 +66,53 @@ MODELS = {
 }
 
 
+def _candidate_dirs() -> list[Path]:
+    """Locations to search for models, in priority order.
+
+    1. PyInstaller bundle (when frozen) — models packaged with the app.
+    2. Repo-relative `models/` next to the script — what install.sh populates.
+    3. ~/.noscribe/models/ — where on-demand downloads land.
+    """
+    candidates = []
+    if getattr(sys, 'frozen', False):
+        candidates.append(Path(sys._MEIPASS) / 'models')
+    candidates.append(Path(__file__).resolve().parent / 'models')
+    candidates.append(_DEFAULT_MODELS_DIR)
+    return candidates
+
+
 def models_dir() -> Path:
-    """Root directory where models are stored (~/.noscribe/models/)."""
+    """Writeable root directory for downloaded models (~/.noscribe/models/)."""
     base = _DEFAULT_MODELS_DIR
     base.mkdir(parents=True, exist_ok=True)
     return base
 
 
 def model_path(quality: str) -> Path:
-    """Return the directory for a given model quality."""
+    """Return the directory for a given model quality.
+
+    Prefers an already-populated location (bundle/install.sh) over the
+    on-demand download dir; falls back to ~/.noscribe/models/<quality> when
+    nothing exists yet so callers know where a future download will land.
+    """
+    for base in _candidate_dirs():
+        candidate = base / quality
+        if candidate.exists():
+            return candidate
     return models_dir() / quality
 
 
 def model_is_ready(quality: str) -> bool:
-    """Return True if all required files for the model are present."""
+    """Return True if all required files for the model are present in any
+    of the candidate locations."""
     entry = MODELS.get(quality)
     if not entry:
         return False
-    mpath = model_path(quality)
-    return all((mpath / f).exists() for f in entry["files"])
+    for base in _candidate_dirs():
+        mpath = base / quality
+        if all((mpath / f).exists() for f in entry["files"]):
+            return True
+    return False
 
 
 def _build_opener(proxy_url: Optional[str] = None, ignore_ssl: bool = False):
@@ -126,11 +154,11 @@ def download_model(
         progress_cb:  Called with (bytes_downloaded, total_bytes) during download
     """
     entry = MODELS[quality]
-    dest_dir = model_path(quality)
-    dest_dir.mkdir(parents=True, exist_ok=True)
-
     if model_is_ready(quality):
         return
+    # Always download into the writeable home dir, never into a bundled location.
+    dest_dir = models_dir() / quality
+    dest_dir.mkdir(parents=True, exist_ok=True)
 
     url = GH_ASSET_URL.format(repo=GH_REPO, tag=GH_RELEASE_TAG, file=entry["asset"])
     tmp_file = dest_dir / entry["asset"]

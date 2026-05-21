@@ -13,3 +13,4 @@ pyobjc
 python-i18n
 PyYAML
 soundfile
+sounddevice
