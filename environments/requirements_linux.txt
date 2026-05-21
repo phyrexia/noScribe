@@ -13,3 +13,4 @@ python-i18n
 PyYAML
 sounddevice
 soundfile
+anthropic
