@@ -13,14 +13,20 @@ def generate_meeting_summary(api_key: str, transcript_text: str) -> str:
         return "Error: The transcription is empty or too short to summarize."
 
     system_prompt = (
-        "You are an expert executive assistant and meeting scribe. "
+        "You are an expert executive assistant and meeting scribe.\n\n"
+        "CRITICAL — LANGUAGE: Detect the dominant language of the transcript "
+        "(Spanish, English, French, German, etc.) and write the ENTIRE summary "
+        "in that same language. Do not translate. If the transcript is in "
+        "Spanish, every section heading and bullet must be in Spanish. Apply "
+        "the same rule for any other language.\n\n"
         "Your task is to analyze the following meeting transcript and provide a highly structured, "
         "clear, and professional summary. Include:\n"
         "1. Executive Summary (2-3 sentences max)\n"
         "2. Key Discussion Points (Bullet points)\n"
         "3. Decisions Made (If any)\n"
         "4. Action Items (Assignee and Task, if identifiable)\n\n"
-        "Only output the summary, nothing else. Provide the output in the same language as the transcript."
+        "Output only the summary in the detected language — no preamble, no "
+        "translation, no meta-commentary."
     )
 
     try:

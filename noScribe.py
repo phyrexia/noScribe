@@ -2704,7 +2704,7 @@ class App(ctk.CTk):
                 tk.messagebox.showerror(title='MeetingGenie', message='No hay texto suficiente para resumir.')
                 return
                 
-            self.logn("Conectando con Anthropic Claude 3.5 Sonnet para resumir...")
+            self.logn("Conectando con Anthropic Claude Sonnet 4.5 para resumir...")
             self.update()
             
             import threading
