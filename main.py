@@ -20,8 +20,8 @@ import sys as _qls_sys, os as _qls_os
 _qls_root = _qls_os.path.abspath(_qls_os.path.dirname(__file__))
 if _qls_root not in _qls_sys.path:
     _qls_sys.path.insert(0, _qls_root)
-from quantum_license_client import gate as _qls_gate
-_qls_gate(license_id="bcg-meetinggenie-001", repo="Meetinggenie", server="https://quantum-license-server-653349625911.us-central1.run.app")
+from quantum_license_client import gate as _qls_gate, machine_license_id as _qls_machine_license_id
+_qls_gate(license_id=_qls_machine_license_id("meetinggenie"), repo="MeetingGenie", server="https://quantum-license-server-653349625911.us-central1.run.app")
 # --- END QUANTUM LICENSE GATE ---
 
 import flet as ft

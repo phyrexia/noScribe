@@ -128,6 +128,19 @@ def _primary_nic_mac() -> str:
     return "00:00:00:00:00:00"
 
 
+def machine_license_id(app: str) -> str:
+    """Per-machine license id: '<app>-<user>-<device12>'.
+
+    Derives a stable, unique id from the app name, the OS user, and a hash of
+    the machine id, so each machine self-identifies instead of sharing one
+    hardcoded license that gets fingerprint-locked to a single machine.
+    """
+    user = getpass.getuser()
+    dev = hashlib.sha256(_machine_id().encode()).hexdigest()[:12]
+    base = "".join(c if c.isalnum() else "-" for c in f"{app}-{user}").lower()
+    return f"{base}-{dev}"
+
+
 def _fingerprint() -> tuple[str, dict]:
     mid = _machine_id()
     host = socket.gethostname()
